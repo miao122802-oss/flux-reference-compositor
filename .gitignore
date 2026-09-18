@@ -1,0 +1,13 @@
+__pycache__/
+*.py[cod]
+.gradio/
+outputs/
+cache/
+.env
+.venv/
+venv/
+.idea/
+.vscode/
+*.safetensors
+*.ckpt
+models/
