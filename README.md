@@ -2,6 +2,34 @@
 
 基于参考图的局部对象替换工具。项目用一次 FLUX.2 Klein inpaint 完成生成，再通过 SAM 点选新旧主体，并在 CPU 上完成背景校色、边界融合和原分辨率合成。
 
+## 效果示例
+
+每组从左到右依次为 **原图 → Mask → 参考图 → 最终效果**。绿色覆盖区域表示指定的编辑区域。
+
+### 主体替换
+
+| 原图 | Mask | 参考图 | 最终效果 |
+| :---: | :---: | :---: | :---: |
+| <img src="assets/examples/cat/original.png" alt="沙发上的原始猫咪" width="220"> | <img src="assets/examples/cat/mask.png" alt="猫咪主体的绿色编辑区域" width="220"> | <img src="assets/examples/cat/reference.png" alt="参考猫咪" width="220"> | <img src="assets/examples/cat/result.png" alt="替换猫咪后的最终效果" width="220"> |
+
+### 物品替换
+
+| 原图 | Mask | 参考图 | 最终效果 |
+| :---: | :---: | :---: | :---: |
+| <img src="assets/examples/coffee/original.png" alt="猫咪手持原始咖啡杯" width="220"> | <img src="assets/examples/coffee/mask.png" alt="咖啡杯的绿色编辑区域" width="220"> | <img src="assets/examples/coffee/reference.png" alt="参考咖啡杯" width="220"> | <img src="assets/examples/coffee/result.png" alt="替换咖啡杯后的最终效果" width="220"> |
+
+### 服装替换
+
+| 原图 | Mask | 参考图 | 最终效果 |
+| :---: | :---: | :---: | :---: |
+| <img src="assets/examples/dress/original.png" alt="身穿印花连衣裙的原图" width="220"> | <img src="assets/examples/dress/mask.png" alt="服装的绿色编辑区域" width="220"> | <img src="assets/examples/dress/reference.png" alt="参考粉色连衣裙" width="220"> | <img src="assets/examples/dress/result.png" alt="替换连衣裙后的最终效果" width="220"> |
+
+### 新增物体
+
+| 原图 | Mask | 参考图 | 最终效果 |
+| :---: | :---: | :---: | :---: |
+| <img src="assets/examples/bouquet/original.png" alt="草地上的人物原图" width="220"> | <img src="assets/examples/bouquet/mask.png" alt="添加花束的矩形编辑区域" width="220"> | <img src="assets/examples/bouquet/reference.png" alt="参考玫瑰花束" width="220"> | <img src="assets/examples/bouquet/result.png" alt="人物手持花束的最终效果" width="220"> |
+
 ## 核心特点
 
 - Reference 主体可用 SAM1/SAM2 点选，也可直接使用已抠好的图片。
@@ -31,6 +59,7 @@
 ├── object_segmenter.py    # 主体 Mask 调整与最终分层合成
 ├── ui_preview.py          # 预览图和原尺寸输出
 ├── tests/                 # CPU 回归测试
+├── assets/examples/       # 原图、Mask、参考图与效果示例
 └── requirements.txt
 ```
 
@@ -68,22 +97,3 @@ python app.py --server-name 0.0.0.0 --port 7860
 ```
 
 然后访问 `http://服务器地址:7860`。
-
-## 测试
-
-CPU 测试不会下载或加载 FLUX、SAM、CUDA 模型：
-
-```bash
-python -m unittest discover -s tests -v
-```
-
-## 上传 GitHub 前
-
-`.gitignore` 已排除模型权重、运行输出、虚拟环境、编辑器配置与本机 `.env`。上传前仍建议运行：
-
-```bash
-git status --short
-python -m unittest discover -s tests -v
-```
-
-模型权重通常体积很大且可能受许可证限制，请不要直接提交到仓库。
