@@ -966,7 +966,6 @@ def run_edit(
     texture_blend_levels,
     background_similarity_threshold,
     background_restore_strength,
-    edit_mode,
     progress_callback=None,
 ):
     request_started = time.perf_counter()
@@ -1001,7 +1000,6 @@ def run_edit(
             reference_ready,
             model_path=model_path.strip(),
             prompt=prompt,
-            edit_mode=edit_mode,
             seed=int(seed),
             num_inference_steps=int(steps),
             guidance_scale=float(guidance),
@@ -1072,7 +1070,7 @@ def run_edit(
         else "OFF/未应用"
     )
     status = (
-        f"✅ FLUX 生成完成｜模式={output['edit_mode']}｜FLUX {output['flux_pass_count']}次｜"
+        f"✅ 参考图局部重绘完成｜FLUX {output['flux_pass_count']}次｜"
         f"seed={output['seed']}｜ROI={output['roi_box_text']}｜"
         f"黄色框={output['location_box_text']}｜"
         f"粘贴外扩={output['blend_expand']}px｜"
@@ -1289,7 +1287,7 @@ def build_demo():
         original_sam_mask = gr.State(None)
 
         gr.HTML(
-            '<div class="app-hero"><h1>FLUX Reference Compositor · 参考图引导的局部替换</h1>'
+            '<div class="app-hero"><h1>FLUX Reference Compositor · 参考图局部重绘</h1>'
             '<p>第一次生成仍使用 Outpaint LoRA；之后不再运行任何扩散模型，只校正第一次背景的色差并重新合成。</p>'
             '<div class="input-map"><span>Reference：放什么</span><b>＋</b>'
             '<span>绿色 Mask：放哪里</span><b>＋</b><span>文字：可选要求</span>'
@@ -1379,11 +1377,6 @@ def build_demo():
                 )
 
         gr.HTML('<div class="workflow-section">' + step_title(3, "添加可选要求并生成", "文字可留空；系统仍会自动执行 Reference 物体迁移") + '</div>')
-        edit_mode = gr.Radio(
-            [flux_inpaint.EDIT_MODE_INSERT, flux_inpaint.EDIT_MODE_REPLACE],
-            value=flux_inpaint.EDIT_MODE_REPLACE,
-            label="合成模式（两种模式均为单次 FLUX；替换模式不再生成背景底板）",
-        )
         with gr.Row(elem_classes="generate-row"):
             prompt = gr.Textbox(
                 label="可选文字要求",
@@ -1768,7 +1761,6 @@ def build_demo():
                 halo_interior_strength,
                 green_despill_enabled, green_despill_width, texture_blend_enabled,
                 texture_blend_levels, background_similarity_threshold, background_restore_strength,
-                edit_mode,
             ],
             [
                 active_job_id, status, generation_progress, generation_metrics,

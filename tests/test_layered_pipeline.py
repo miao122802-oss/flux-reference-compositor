@@ -40,7 +40,7 @@ class LayeredPipelineTests(unittest.TestCase):
         self.mask = Image.new("L", (32, 32), 255)
         self.reference = Image.new("RGB", (16, 16), "white")
 
-    def run_layers(self, mode):
+    def run_layers(self):
         pipe = FakePipeline()
         result = flux_inpaint.run_layered_diffusion(
             pipe,
@@ -49,7 +49,6 @@ class LayeredPipelineTests(unittest.TestCase):
             model_mask=self.mask,
             reference_model=self.reference,
             object_prompt="object prompt",
-            edit_mode=mode,
             seed=77,
             num_inference_steps=4,
             guidance_scale=1.0,
@@ -57,21 +56,18 @@ class LayeredPipelineTests(unittest.TestCase):
         )
         return pipe, result
 
-    def test_insert_calls_flux_once(self):
-        pipe, result = self.run_layers(flux_inpaint.EDIT_MODE_INSERT)
+    def test_edit_calls_flux_once_with_reference(self):
+        pipe, result = self.run_layers()
         self.assertEqual(len(pipe.calls), 1)
-        self.assertIn("image_reference", pipe.calls[0])
-        self.assertIsNone(result["background"])
-
-    def test_replace_calls_flux_once_with_reference(self):
-        pipe, result = self.run_layers(flux_inpaint.EDIT_MODE_REPLACE)
-        self.assertEqual(len(pipe.calls), 1)
-        self.assertIn("image_reference", pipe.calls[0])
+        self.assertIs(pipe.calls[0]["image_reference"], self.reference)
+        self.assertIs(pipe.calls[0]["image"], self.image)
+        self.assertIs(pipe.calls[0]["mask_image"], self.mask)
+        self.assertEqual(pipe.calls[0]["prompt"], "object prompt")
         self.assertIsNone(result["background"])
         self.assertEqual(result["pass_count"], 1)
 
-    def test_replace_uses_requested_seed(self):
-        pipe, _result = self.run_layers(flux_inpaint.EDIT_MODE_REPLACE)
+    def test_edit_uses_requested_seed(self):
+        pipe, _result = self.run_layers()
         self.assertEqual([call["generator"].seed for call in pipe.calls], [77])
 
 

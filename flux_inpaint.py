@@ -49,8 +49,8 @@ DEFAULT_PROMPT = (
     "Integrate the replacement naturally with correct scale, perspective, lighting, contact and shadows. "
     "Do not retain the original object and do not add unrelated objects."
 )
-EDIT_MODE_INSERT = "新增物体"
-EDIT_MODE_REPLACE = "替换旧物体"
+
+
 @dataclass(frozen=True)
 class PipelineKey:
     model_path: str
@@ -80,7 +80,6 @@ def run_layered_diffusion(
     model_mask: Image.Image,
     reference_model: Image.Image,
     object_prompt: str,
-    edit_mode: str,
     seed: int,
     num_inference_steps: int,
     guidance_scale: float,
@@ -88,8 +87,7 @@ def run_layered_diffusion(
     callback_factory: Callable[[int, str], Callable | None] | None = None,
     before_pass: Callable[[int, str], None] | None = None,
 ) -> dict[str, Any]:
-    """Run one reference-guided FLUX pass for both insert and replace modes."""
-    edit_mode = EDIT_MODE_REPLACE if edit_mode == EDIT_MODE_REPLACE else EDIT_MODE_INSERT
+    """Run a single reference-guided FLUX editing pass."""
     pass_count = 1
     pass_seconds: dict[str, float] = {}
 
@@ -105,8 +103,7 @@ def run_layered_diffusion(
             "guidance_scale": float(guidance_scale),
             "height": model_input.height,
             "width": model_input.width,
-            # Never reuse a consumed Generator: both replacement passes start
-            # from the exact same requested seed.
+            # Use a fresh generator initialized with the requested seed.
             "generator": torch_module.Generator(device="cuda").manual_seed(int(seed)),
         }
         callback = callback_factory(index, label) if callback_factory is not None else None
@@ -471,7 +468,6 @@ def edit_with_reference(
     *,
     model_path: str = DEFAULT_MODEL_PATH,
     prompt: str = "",
-    edit_mode: str = EDIT_MODE_INSERT,
     seed: int = -1,
     num_inference_steps: int = 4,
     guidance_scale: float = 1.0,
@@ -592,7 +588,6 @@ def edit_with_reference(
     )
     pipeline_prepare_seconds = time.perf_counter() - pipeline_started
 
-    edit_mode = EDIT_MODE_REPLACE if edit_mode == EDIT_MODE_REPLACE else EDIT_MODE_INSERT
     pass_count = 1
     report("FLUX 模型已就绪，准备开始扩散…", 0.25)
     print(
@@ -640,7 +635,6 @@ def edit_with_reference(
         model_mask=model_mask,
         reference_model=reference_model,
         object_prompt=build_prompt(prompt, use_outpaint_lora=lora_enabled),
-        edit_mode=edit_mode,
         seed=actual_seed,
         num_inference_steps=num_inference_steps,
         guidance_scale=guidance_scale,
@@ -793,7 +787,6 @@ def edit_with_reference(
         "reference": reference_model,
         "model_input": model_input,
         "prompt": build_prompt(prompt, use_outpaint_lora=lora_enabled),
-        "edit_mode": edit_mode,
         "flux_pass_count": pass_count,
         "lora_enabled": bool(lora_enabled),
         "lora_path": lora_path.strip() if lora_enabled else "",

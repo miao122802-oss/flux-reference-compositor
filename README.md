@@ -17,7 +17,7 @@ Each row shows the original image, editing mask, reference image, and final resu
 
 - Select reference subjects with SAM1/SAM2 point prompts or use a prepared cutout.
 - Define target editing regions with the drawing editor or SAM segmentation.
-- Insert or replace objects with a single FLUX generation pass.
+- Edit the selected region using a reference image and a single FLUX generation pass.
 - Refine generated and original subject masks through interactive SAM selection.
 - Harmonize background colors on the CPU without a second diffusion pass.
 - Export lossless PNG results at the target image's original resolution.
@@ -26,7 +26,7 @@ Each row shows the original image, editing mask, reference image, and final resu
 
 1. Upload a reference image and select the subject to transfer.
 2. Upload a target image and draw or segment the editing region.
-3. Choose the insertion or replacement mode and run FLUX.
+3. Optionally describe the desired edit, then run FLUX.
 4. Select the new subject in the generated region and the original subject in the target region.
 5. Apply background color correction and final compositing, then download the full-resolution PNG.
 
