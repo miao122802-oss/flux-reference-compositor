@@ -3,39 +3,39 @@
 EDITOR_HTML = r"""
 <div id="green-mask-editor" class="mask-editor">
   <div class="mask-toolbar">
-    <label class="file-button"><span class="button-icon">＋</span> 打开目标原图
+    <label class="file-button"><span class="button-icon">＋</span> Open Target Image
       <input id="green-mask-file" type="file" accept="image/*" />
     </label>
     <span class="toolbar-divider"></span>
-    <span class="tool-label">绘制工具</span>
+    <span class="tool-label">Drawing tools</span>
     <label class="mask-mode-option">
       <input type="radio" name="green-mask-mode" value="rectangle" checked />
-      <span class="mode-label">▭ 矩形框 <kbd>R</kbd></span>
+      <span class="mode-label">▭ Rectangle <kbd>R</kbd></span>
     </label>
     <label class="mask-mode-option">
       <input type="radio" name="green-mask-mode" value="brush" />
-      <span class="mode-label">● 画笔 <kbd>B</kbd></span>
+      <span class="mode-label">● Brush <kbd>B</kbd></span>
     </label>
-    <label class="brush-control">画笔 <input id="green-brush-size" type="number" min="1" max="1000" step="10" value="80" /> px</label>
-    <button id="green-mask-undo" type="button">↶ 撤销</button>
-    <button id="green-mask-clear" class="danger-lite" type="button">清空</button>
+    <label class="brush-control">Brush <input id="green-brush-size" type="number" min="1" max="1000" step="10" value="80" /> px</label>
+    <button id="green-mask-undo" type="button">↶ Undo</button>
+    <button id="green-mask-clear" class="danger-lite" type="button">Clear</button>
   </div>
   <div class="mask-help-row">
-    <span class="legend-chip add"><i></i>绿色区域：将被 Reference 替换</span>
-    <span class="legend-chip erase"><i></i>右键：擦除选区</span>
-    <span>框不必贴合物体轮廓，只需明确目标位置和大致大小</span>
+    <span class="legend-chip add"><i></i>Green: reference-guided editing region</span>
+    <span class="legend-chip erase"><i></i>Right-click: erase selection</span>
+    <span>Mark the desired position and size; an exact outline is not required.</span>
   </div>
   <div class="mask-canvas-wrap">
     <canvas id="green-mask-canvas"></canvas>
     <div id="green-mask-empty">
       <div class="empty-icon">▧</div>
-      <strong>尚未打开目标图</strong>
-      <span>点击左上角“打开目标原图”开始绘制</span>
+      <strong>No target image</strong>
+      <span>Click Open Target Image above to start drawing.</span>
     </div>
   </div>
   <div class="mask-status-row">
-    <span id="green-mask-status" class="status-ready-dot">等待目标图</span>
-    <span>左键添加｜右键擦除｜Ctrl+Z 撤销｜滚轮调整画笔</span>
+    <span id="green-mask-status" class="status-ready-dot">Waiting for target image</span>
+    <span>Left-click: add | Right-click: erase | Ctrl+Z: undo | Scroll: brush size</span>
   </div>
 </div>
 """
@@ -170,8 +170,8 @@ MASK_EDITOR_JS = r"""
     root.dataset.activeMode = activeMode;
     if (announce) {
       status.textContent = activeMode === "brush"
-        ? `画笔模式已启用｜大小 ${brushInput.value}px｜左键添加，右键擦除`
-        : "矩形框模式已启用｜左键添加，右键擦除";
+        ? `Brush mode | Size ${brushInput.value}px | Left-click to add, right-click to erase`
+        : "Rectangle mode | Left-click to add, right-click to erase";
     }
   }
   modeInputs.forEach(input => {
@@ -209,7 +209,7 @@ MASK_EDITOR_JS = r"""
     undoStack.push(maskCanvas.toDataURL("image/png"));
     if (undoStack.length > 12) undoStack.shift();
   }
-  function updateStats(prefix = "目标区域已更新") {
+  function updateStats(prefix = "Editing region updated") {
     const data = maskCtx.getImageData(0, 0, maskCanvas.width, maskCanvas.height).data;
     let selected = 0, minX = maskCanvas.width, minY = maskCanvas.height, maxX = -1, maxY = -1;
     for (let y = 0; y < maskCanvas.height; y++) {
@@ -219,11 +219,11 @@ MASK_EDITOR_JS = r"""
         }
       }
     }
-    if (!selected) { status.textContent = `${prefix}｜当前选区为空`; return; }
+    if (!selected) { status.textContent = `${prefix} | Selection is empty`; return; }
     const pct = selected * 100 / (maskCanvas.width * maskCanvas.height);
     const fullW = Math.max(1, Math.round((maxX-minX+1) / workingScale));
     const fullH = Math.max(1, Math.round((maxY-minY+1) / workingScale));
-    status.textContent = `${prefix}｜绿色选区 ${pct.toFixed(1)}%｜原图范围约 ${fullW}×${fullH}px`;
+    status.textContent = `${prefix} | Selected region ${pct.toFixed(1)}% | Original-image extent ${fullW}×${fullH}px`;
   }
   function render(previewPoint = null) {
     if (!loaded) return;
@@ -268,7 +268,7 @@ MASK_EDITOR_JS = r"""
       maskCtx.fillStyle = "white"; maskCtx.fillRect(left, top, width, height); maskCtx.restore();
     }
     drawing = false; start = null; last = null; render(); syncMask();
-    updateStats(activeButton === 2 ? "已擦除区域" : "已添加区域");
+    updateStats(activeButton === 2 ? "Region erased" : "Region added");
   }
   fileInput.addEventListener("change", () => {
     const file = fileInput.files && fileInput.files[0]; if (!file) return;
@@ -288,8 +288,8 @@ MASK_EDITOR_JS = r"""
         sourceData = reader.result; loaded = true; undoStack = [];
         canvas.style.display = "block"; emptyTip.style.display = "none";
         render(); syncSource(); syncMask();
-        const workNote = workingScale < 1 ? `｜画布加速 ${workWidth}×${workHeight}` : "";
-        status.textContent = `目标图已就绪｜${originalWidth}×${originalHeight}${workNote}｜请绘制绿色区域`;
+        const workNote = workingScale < 1 ? ` | Preview canvas ${workWidth}×${workHeight}` : "";
+        status.textContent = `Target ready | ${originalWidth}×${originalHeight}${workNote} | Draw the editing region`;
       }; img.src = reader.result;
     }; reader.readAsDataURL(file);
   });
@@ -310,21 +310,21 @@ MASK_EDITOR_JS = r"""
   canvas.addEventListener("wheel", event => {
     if (!loaded) return; event.preventDefault();
     brushInput.value = Math.max(1, Math.min(1000, Number(brushInput.value) + (event.deltaY < 0 ? 10 : -10)));
-    status.textContent = `画笔大小已调整为 ${brushInput.value}px`;
+    status.textContent = `Brush size set to ${brushInput.value}px`;
   }, {passive: false});
   document.getElementById("green-mask-undo").addEventListener("click", () => {
-    if (!loaded || !undoStack.length) { status.textContent = "没有可撤销的操作"; return; }
+    if (!loaded || !undoStack.length) { status.textContent = "Nothing to undo"; return; }
     const snapshot = new Image();
     snapshot.onload = () => {
       maskCtx.clearRect(0, 0, maskCanvas.width, maskCanvas.height);
       maskCtx.drawImage(snapshot, 0, 0);
-      render(); syncMask(); updateStats("已撤销上一步");
+      render(); syncMask(); updateStats("Last action undone");
     };
     snapshot.src = undoStack.pop();
   });
   document.getElementById("green-mask-clear").addEventListener("click", () => {
     if (!loaded) return; pushUndo(); maskCtx.clearRect(0, 0, maskCanvas.width, maskCanvas.height);
-    render(); syncMask(); updateStats("已清空（可撤销）");
+    render(); syncMask(); updateStats("Selection cleared (undo available)");
   });
   document.addEventListener("keydown", event => {
     const tag = document.activeElement && document.activeElement.tagName;

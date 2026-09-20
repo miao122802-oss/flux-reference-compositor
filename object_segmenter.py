@@ -218,7 +218,7 @@ def build_auto_prompt(
     )
     edit_mask_roi = normalize_mask(edit_mask_roi, background_roi.size)
     if edit_mask_roi.getbbox() is None:
-        raise ValueError("编辑 Mask 为空，无法自动提取生成物体。")
+        raise ValueError("The editing mask is empty. Cannot extract the generated subject.")
 
     scale = min(1.0, float(max_work_side) / max(background_roi.size))
     work_size = (
@@ -411,7 +411,7 @@ def segment_generated_object(
             positive_points=[list(item) for item in prompt.positive_points],
             negative_points=[list(item) for item in prompt.negative_points],
             accepted=False,
-            message=f"SAM不可用，已安全保留v3合成结果：{exc}",
+            message=f"SAM is unavailable. The initial composite has been preserved: {exc}",
         )
     result = _choose_prediction(prediction, prompt, edit_mask_roi)
     if result.accepted or not dino_prompt.strip():
@@ -440,10 +440,10 @@ def segment_generated_object(
         )
         dino_result = _choose_prediction(prediction, prompt, edit_mask_roi)
         dino_result.used_dino = True
-        dino_result.message = "DINO备用定位后" + dino_result.message
+        dino_result.message = "After DINO fallback: " + dino_result.message
         return dino_result if dino_result.quality >= result.quality else result
     except Exception as exc:
-        result.message += f"；DINO备用失败：{exc}"
+        result.message += f"; DINO fallback failed: {exc}"
         return result
 
 
@@ -465,7 +465,7 @@ def failed_segmentation_result(
         positive_points=[list(item) for item in prompt.positive_points],
         negative_points=[list(item) for item in prompt.negative_points],
         accepted=False,
-        message=f"SAM自动分割失败，已保留v3结果，可检查模型路径后修正：{message}",
+        message=f"Automatic SAM segmentation failed. The initial result is preserved. Check model paths and refine: {message}",
     )
 
 
@@ -512,7 +512,7 @@ def segment_with_dino_fallback(
     result.positive_points = [list(item) for item in previous.positive_points]
     result.negative_points = [list(item) for item in previous.negative_points]
     result.used_dino = True
-    result.message = "手动DINO备用定位后" + result.message
+    result.message = "After manual DINO fallback: " + result.message
     return result
 
 
@@ -526,7 +526,7 @@ def _choose_prediction(
         return SegmentationResult(
             None, 0.0, 0.0, str(prediction.get("kind", "sam")), None,
             prompt, prompt.positive_points, prompt.negative_points, False,
-            "SAM没有返回Mask。",
+            "SAM returned no masks.",
         )
     ranked = []
     for index, (mask, score) in enumerate(zip(masks, scores)):
@@ -540,8 +540,8 @@ def _choose_prediction(
     allowed = normalize_mask(edit_mask, edit_mask.size)
     selected = ImageChops.multiply(normalize_mask(masks[best], edit_mask.size), allowed)
     message = (
-        f"SAM自动Mask {'已接受' if accepted else '需要修正'}｜quality={quality:.3f}｜"
-        f"area={details['area_ratio']:.3f}｜contain={details['containment']:.3f}"
+        f"Automatic SAM mask {'accepted' if accepted else 'needs refinement'} | quality={quality:.3f} | "
+        f"area={details['area_ratio']:.3f} | contain={details['containment']:.3f}"
     )
     return SegmentationResult(
         mask=selected,
@@ -583,7 +583,7 @@ def refine_segmentation(
     result = _choose_prediction(prediction, previous.auto_prompt, edit_mask_roi)
     result.positive_points = [list(item) for item in positive_points]
     result.negative_points = [list(item) for item in negative_points]
-    result.message = "点击修正后" + result.message
+    result.message = "After point refinement: " + result.message
     return result
 
 
@@ -601,13 +601,13 @@ def detect_grounding_box(
     """Lazy optional GroundingDINO fallback returning one edit-overlapping box."""
     phrase = phrase.strip()
     if not phrase:
-        raise ValueError("DINO检测词为空。")
+        raise ValueError("The DINO detection phrase is empty.")
     root_path = Path(root).expanduser()
     config_path = Path(config).expanduser()
     checkpoint_path = Path(checkpoint).expanduser()
-    for name, path in (("DINO源码", root_path), ("DINO配置", config_path), ("DINO权重", checkpoint_path)):
+    for name, path in (("DINO source", root_path), ("DINO config", config_path), ("DINO weights", checkpoint_path)):
         if not path.exists():
-            raise FileNotFoundError(f"{name}不存在：{path}")
+            raise FileNotFoundError(f"{name} not found: {path}")
     import_root = root_path if (root_path / "groundingdino").is_dir() else root_path.parent
     if str(import_root) not in sys.path:
         sys.path.insert(0, str(import_root))
@@ -615,7 +615,7 @@ def detect_grounding_box(
         import torch
         from groundingdino.util.inference import load_image, load_model, predict
     except ImportError as exc:
-        raise RuntimeError("GroundingDINO未安装或源码路径不可导入。") from exc
+        raise RuntimeError("GroundingDINO is not installed or its source path cannot be imported.") from exc
 
     model = load_model(str(config_path), str(checkpoint_path), device="cuda")
     with tempfile.NamedTemporaryFile(suffix=".png", delete=False) as handle:
@@ -636,7 +636,7 @@ def detect_grounding_box(
         del model
         _clear_cuda()
     if len(boxes) == 0:
-        raise RuntimeError(f"DINO没有检测到 {phrase!r}。")
+        raise RuntimeError(f"DINO did not detect {phrase!r}.")
     width, height = image.size
     allowed = np.asarray(normalize_mask(edit_mask, image.size), dtype=np.uint8) >= 128
     candidates = []
@@ -657,7 +657,7 @@ def detect_grounding_box(
     del boxes, logits
     _clear_cuda()
     if not candidates:
-        raise RuntimeError("DINO检测框与绿色编辑区域不重合。")
+        raise RuntimeError("The DINO detection box does not overlap the editing region.")
     return max(candidates, key=lambda item: item[0])[1]
 
 

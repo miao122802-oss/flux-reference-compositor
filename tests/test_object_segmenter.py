@@ -336,7 +336,7 @@ class RecoveryAndRefinementTests(unittest.TestCase):
             )
         self.assertFalse(result.accepted)
         self.assertIsNone(result.mask)
-        self.assertIn("v3", result.message)
+        self.assertIn("initial composite has been preserved", result.message)
 
     def test_dino_no_detection_preserves_sam_result(self):
         generated, edit, _previous = self._previous()
@@ -366,7 +366,7 @@ class RecoveryAndRefinementTests(unittest.TestCase):
             )
         self.assertIsNotNone(result.mask)
         self.assertFalse(result.accepted)
-        self.assertIn("DINO备用失败", result.message)
+        self.assertIn("DINO fallback failed", result.message)
 
     def test_coordinate_mapping_and_prompt_undo_history(self):
         self.assertEqual(

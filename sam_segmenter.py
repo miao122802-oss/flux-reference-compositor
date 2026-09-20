@@ -68,7 +68,7 @@ def _build_local_sam2(model_dir: Path):
     checkpoint = _find_file(model_dir, ("*.pt", "*.pth"))
     config = _find_file(model_dir, ("*.yaml", "*.yml"))
     if checkpoint is None or config is None:
-        raise FileNotFoundError(f"{model_dir} 中需要同时存在 SAM2 yaml 和 .pt/.pth 权重。")
+        raise FileNotFoundError(f"{model_dir} must contain both a SAM2 YAML config and .pt/.pth weights.")
     started = time.perf_counter()
     print(f"[SAM2] config={config}", flush=True)
     print(f"[SAM2] checkpoint={checkpoint}", flush=True)
@@ -81,13 +81,13 @@ def _build_local_sam2(model_dir: Path):
     with initialize_config_dir(version_base=None, config_dir=str(config.parent.resolve())):
         cfg = compose(config_name=config.stem, overrides=overrides)
     OmegaConf.resolve(cfg)
-    print("[SAM2] 正在实例化模型结构…", flush=True)
+    print("[SAM2] Building the model...", flush=True)
     model = instantiate(cfg.model, _recursive_=True)
-    print("[SAM2] 正在读取 checkpoint…", flush=True)
+    print("[SAM2] Reading checkpoint...", flush=True)
     _load_checkpoint(model, str(checkpoint.resolve()))
-    print("[SAM2] 正在移动模型到 CUDA…", flush=True)
+    print("[SAM2] Moving model to CUDA...", flush=True)
     model.to("cuda").eval()
-    print(f"[SAM2] 模型准备完成，耗时 {time.perf_counter() - started:.1f}s", flush=True)
+    print(f"[SAM2] Model ready in {time.perf_counter() - started:.1f}s", flush=True)
     return SAM2ImagePredictor(model)
 
 
@@ -97,7 +97,7 @@ def load_segmenter(backend: str, sam2_path: str, sam1_path: str):
     key = (backend, sam2_path.strip(), sam1_path.strip())
     with _LOCK:
         if _SEGMENTER is not None and _SEGMENTER_KEY == key:
-            print(f"[SAM] 使用已缓存的 {_SEGMENTER_KIND}", flush=True)
+            print(f"[SAM] Using cached {_SEGMENTER_KIND}", flush=True)
             return _SEGMENTER, _SEGMENTER_KIND
         _SEGMENTER = _SEGMENTER_KIND = _SEGMENTER_KEY = _CURRENT_IMAGE_KEY = None
         _empty_cuda_cache()
@@ -107,11 +107,11 @@ def load_segmenter(backend: str, sam2_path: str, sam1_path: str):
                 from sam2.sam2_image_predictor import SAM2ImagePredictor
 
                 path = Path(sam2_path).expanduser()
-                print(f"[SAM] 开始加载 SAM2：{sam2_path}", flush=True)
+                print(f"[SAM] Loading SAM2: {sam2_path}", flush=True)
                 _SEGMENTER = _build_local_sam2(path) if path.is_dir() else SAM2ImagePredictor.from_pretrained(sam2_path, device="cuda")
                 _SEGMENTER_KIND = "sam2"
             except Exception as exc:
-                print(f"[SAM] SAM2 加载失败：{exc}", flush=True)
+                print(f"[SAM] SAM2 loading failed: {exc}", flush=True)
                 errors.append(f"SAM2: {exc}")
                 if backend == "sam2":
                     raise RuntimeError("；".join(errors)) from exc
@@ -119,17 +119,17 @@ def load_segmenter(backend: str, sam2_path: str, sam1_path: str):
             try:
                 from segment_anything import SamPredictor, sam_model_registry
 
-                print(f"[SAM] 开始加载 SAM1：{sam1_path}", flush=True)
+                print(f"[SAM] Loading SAM1: {sam1_path}", flush=True)
                 started = time.perf_counter()
                 sam = sam_model_registry["vit_h"](checkpoint=sam1_path)
                 sam.to(device="cuda").eval()
                 _SEGMENTER, _SEGMENTER_KIND = SamPredictor(sam), "sam1"
-                print(f"[SAM] SAM1 准备完成，耗时 {time.perf_counter() - started:.1f}s", flush=True)
+                print(f"[SAM] SAM1 ready in {time.perf_counter() - started:.1f}s", flush=True)
             except Exception as exc:
                 errors.append(f"SAM1: {exc}")
                 raise RuntimeError("；".join(errors)) from exc
         if _SEGMENTER is None:
-            raise ValueError(f"未知的分割后端：{backend}")
+            raise ValueError(f"Unknown segmentation backend: {backend}")
         _SEGMENTER_KEY = key
         return _SEGMENTER, _SEGMENTER_KIND
 
@@ -143,7 +143,7 @@ def segment_reference(
     sam1_path: str = DEFAULT_SAM1_PATH,
 ) -> tuple[Image.Image, float, str]:
     if not points or not any(int(label) == 1 for label in labels):
-        raise ValueError("至少需要一个前景点。")
+        raise ValueError("At least one foreground point is required.")
     positive = [point for point, label in zip(points, labels) if int(label) == 1]
     negative = [point for point, label in zip(points, labels) if int(label) == 0]
     prediction = segment_with_prompts(
@@ -172,7 +172,7 @@ def segment_with_prompts(
     """Run SAM1/SAM2 with an optional box, positive/negative points and logits."""
     global _CURRENT_IMAGE_KEY
     if box_xyxy is None and not positive_points:
-        raise ValueError("SAM至少需要一个前景点或一个包围框。")
+        raise ValueError("SAM requires at least one foreground point or a bounding box.")
     predictor, kind = load_segmenter(backend, sam2_path, sam1_path)
     image = rgb(image)
     key = _image_key(image)
@@ -189,17 +189,17 @@ def segment_with_prompts(
     import torch
 
     if key != _CURRENT_IMAGE_KEY:
-        print(f"[SAM] 开始编码图像：{image.width}x{image.height}", flush=True)
+        print(f"[SAM] Encoding image: {image.width}x{image.height}", flush=True)
         encode_started = time.perf_counter()
         image_array = np.array(image, dtype=np.uint8, copy=True)
         with torch.inference_mode():
             predictor.set_image(image_array)
         _CURRENT_IMAGE_KEY = key
-        print(f"[SAM] 图像编码完成，耗时 {time.perf_counter() - encode_started:.1f}s", flush=True)
+        print(f"[SAM] Image encoded in {time.perf_counter() - encode_started:.1f}s", flush=True)
     point_count = 0 if coords is None else len(coords)
     print(
-        f"[SAM] 开始根据 box={'ON' if box is not None else 'OFF'}、"
-        f"{point_count} 个提示点预测 Mask…",
+        f"[SAM] Predicting mask with box={'ON' if box is not None else 'OFF'}, "
+        f"{point_count} prompt points...",
         flush=True,
     )
     predict_started = time.perf_counter()
@@ -213,7 +213,7 @@ def segment_with_prompts(
             mask_input=mask_input,
             multimask_output=True,
         )
-    print(f"[SAM] Mask 预测完成，耗时 {time.perf_counter() - predict_started:.2f}s", flush=True)
+    print(f"[SAM] Mask predicted in {time.perf_counter() - predict_started:.2f}s", flush=True)
     mask_images = [
         normalize_mask(
             Image.fromarray((np.asarray(mask) > 0).astype(np.uint8) * 255, mode="L"),

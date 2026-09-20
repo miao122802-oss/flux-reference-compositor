@@ -37,8 +37,8 @@ _JOBS_LOCK = threading.Lock()
 _GENERATION_LOCK = threading.Lock()
 _OUTPUT_ROOT = Path(__file__).resolve().parent / "outputs"
 
-TARGET_DRAW_MODE = "手动画绿色区域"
-TARGET_SAM_MODE = "SAM 自动分割 Target"
+TARGET_DRAW_MODE = "Draw Mask"
+TARGET_SAM_MODE = "Segment Target with SAM"
 
 
 def _generation_active() -> bool:
@@ -90,7 +90,7 @@ def _prune_finished_jobs(keep: int = 10) -> None:
 
 def _progress_html(progress: float, message: str, state: str = "running") -> str:
     value = max(0.0, min(100.0, float(progress)))
-    safe_message = html.escape(message or "等待任务状态…")
+    safe_message = html.escape(message or "Waiting for task status...")
     state_class = " failed" if state == "failed" else (" completed" if state == "completed" else "")
     return (
         f'<div class="generation-progress{state_class}">'
@@ -103,8 +103,8 @@ def _progress_html(progress: float, message: str, state: str = "running") -> str
 def _metrics_html(metrics: dict | None = None) -> str:
     if not metrics:
         return (
-            '<div class="task-metrics empty"><div class="task-metrics-title">任务统计</div>'
-            '<div class="task-metrics-empty">生成完成后显示输入/输出尺寸、倍率、耗时和峰值显存。</div></div>'
+            '<div class="task-metrics empty"><div class="task-metrics-title">Task Metrics</div>'
+            '<div class="task-metrics-empty">Image sizes, scale, timing, and peak GPU memory appear after generation.</div></div>'
         )
 
     def size(name: str) -> str:
@@ -113,12 +113,12 @@ def _metrics_html(metrics: dict | None = None) -> str:
 
     scale = f"{metrics['output_scale_x']:.3f}× / {metrics['output_scale_y']:.3f}×"
     cards = [
-        ("目标原图", size("source_input_size"), "用户输入尺寸"),
-        ("Reference", size("reference_input_size"), f"送模 {size('reference_model_size') }"),
-        ("FLUX ROI", size("model_input_size"), f"原始 ROI {size('roi_source_size')}"),
-        ("最终输出", size("output_size"), f"宽/高倍率 {scale}"),
-        ("端到端耗时", f"{metrics['end_to_end_seconds']:.2f} s", f"FLUX 内部 {metrics['flux_total_seconds']:.2f} s"),
-        ("任务峰值显存", f"{metrics['peak_reserved_gib']:.2f} GiB", f"allocated {metrics['peak_allocated_gib']:.2f} GiB"),
+        ("Target image", size("source_input_size"), "Input dimensions"),
+        ("Reference", size("reference_input_size"), f"Model input: {size('reference_model_size') }"),
+        ("FLUX ROI", size("model_input_size"), f"Original ROI: {size('roi_source_size')}"),
+        ("Final output", size("output_size"), f"Width/height scale: {scale}"),
+        ("Total elapsed time", f"{metrics['end_to_end_seconds']:.2f} s", f"FLUX processing: {metrics['flux_total_seconds']:.2f} s"),
+        ("Peak GPU memory", f"{metrics['peak_reserved_gib']:.2f} GiB", f"allocated {metrics['peak_allocated_gib']:.2f} GiB"),
     ]
     card_html = "".join(
         f'<div class="metric-card"><span>{html.escape(label)}</span><strong>{html.escape(value)}</strong>'
@@ -126,28 +126,28 @@ def _metrics_html(metrics: dict | None = None) -> str:
         for label, value, note in cards
     )
     breakdown_parts = [
-        f"预处理 {metrics['preprocess_seconds']:.2f}s",
-        f"模型加载/准备 {metrics['pipeline_prepare_seconds']:.2f}s",
+        f"Preprocessing: {metrics['preprocess_seconds']:.2f}s",
+        f"Model preparation: {metrics['pipeline_prepare_seconds']:.2f}s",
     ]
     if metrics.get("background_diffusion_seconds", 0.0) > 0:
         breakdown_parts.append(
-            f"FLUX背景 {metrics['background_diffusion_seconds']:.2f}s"
+            f"FLUX background: {metrics['background_diffusion_seconds']:.2f}s"
         )
     breakdown_parts.extend(
         [
-            f"FLUX物体 {metrics.get('object_diffusion_seconds', metrics['diffusion_seconds']):.2f}s",
-            f"恢复尺寸与合成 {metrics['postprocess_seconds']:.2f}s",
+            f"FLUX subject: {metrics.get('object_diffusion_seconds', metrics['diffusion_seconds']):.2f}s",
+            f"Resize and composite: {metrics['postprocess_seconds']:.2f}s",
         ]
     )
     if metrics.get("segmentation_enabled", False):
         breakdown_parts.append(
-            f"物体分割 {metrics.get('segmentation_seconds', 0.0):.2f}s"
+            f"Subject segmentation: {metrics.get('segmentation_seconds', 0.0):.2f}s"
         )
     else:
-        breakdown_parts.append("生成后 SAM 等待用户点选")
-    breakdown = "　｜　".join(breakdown_parts)
+        breakdown_parts.append("Waiting for generated subject selection")
+    breakdown = "　 | 　".join(breakdown_parts)
     return (
-        '<div class="task-metrics"><div class="task-metrics-title">任务统计</div>'
+        '<div class="task-metrics"><div class="task-metrics-title">Task Metrics</div>'
         f'<div class="task-metrics-grid">{card_html}</div>'
         f'<div class="metrics-breakdown">{html.escape(breakdown)}</div></div>'
     )
@@ -155,13 +155,13 @@ def _metrics_html(metrics: dict | None = None) -> str:
 
 def decode_data_url(data: str, name: str) -> Image.Image:
     if not data:
-        raise gr.Error(f"请先提供{name}。")
+        raise gr.Error(f"Please provide {name} first.")
     try:
         encoded = data.split(",", 1)[1] if "," in data else data
         with Image.open(io.BytesIO(base64.b64decode(encoded))) as image:
             return ImageOps.exif_transpose(image).copy()
     except Exception as exc:
-        raise gr.Error(f"无法读取{name}：{exc}") from exc
+        raise gr.Error(f"Cannot read {name}: {exc}") from exc
 
 
 def _display(image: Image.Image | None, *, mask: bool = False):
@@ -177,7 +177,7 @@ def _display_click_to_full(index, image: Image.Image) -> list[float]:
 
 def reset_reference(image):
     if image is None:
-        return None, [], [], None, None, None, None, "等待 Reference。"
+        return None, [], [], None, None, None, None, "Waiting for reference image."
     image = ImageOps.exif_transpose(image).convert("RGB")
     return (
         image,
@@ -187,7 +187,7 @@ def reset_reference(image):
         None,
         _display(image),
         None,
-        "✅ Reference 原图已加载。请在中间图片点击一个或多个绿色前景点。",
+        "✅ Reference loaded. Add one or more green foreground points to the center image.",
     )
 
 
@@ -202,10 +202,10 @@ def _predict_reference(
     ref_feather,
 ):
     if _generation_active():
-        raise RuntimeError("FLUX 正在生成，暂时不能重新加载 SAM；请等待当前任务完成。")
+        raise RuntimeError("FLUX is generating. Wait for the current task before loading SAM.")
     point_preview = sam_segmenter.draw_points(image, points, labels)
     if not any(label == 1 for label in labels):
-        return None, None, _display(point_preview), None, "已记录背景排除点，还需要至少一个绿色前景点。"
+        return None, None, _display(point_preview), None, "Background point recorded. Add at least one green foreground point."
     flux_inpaint.release_pipeline()
     mask, score, kind = sam_segmenter.segment_reference(
         image,
@@ -225,8 +225,8 @@ def _predict_reference(
     fg_count = sum(int(label) == 1 for label in labels)
     bg_count = len(labels) - fg_count
     status = (
-        f"✅ {kind.upper()} 已提取主体｜score={score:.4f}｜"
-        f"前景点 {fg_count} 个，背景点 {bg_count} 个。右侧白底图就是实际 Reference。"
+        f"✅ {kind.upper()} Subject extracted | score={score:.4f} | "
+        f"Foreground points: {fg_count}, background points: {bg_count}. The white-background cutout is the model reference."
     )
     return cutout, mask, _display(preview), _display(cutout), status
 
@@ -244,13 +244,13 @@ def select_reference_point(
     evt: gr.SelectData,
 ):
     if image is None:
-        raise gr.Error("请先上传 Reference 原图。")
+        raise gr.Error("Upload a reference image first.")
     index = evt.index
     if not isinstance(index, (tuple, list)) or len(index) < 2:
-        raise gr.Error("未获取到点击坐标，请重新点击图片。")
+        raise gr.Error("No click coordinates received. Click the image again.")
     full_point = _display_click_to_full(index, image)
     new_points = [list(item) for item in (points or [])] + [full_point]
-    new_labels = [int(item) for item in (labels or [])] + [1 if point_mode == "前景点（绿色）" else 0]
+    new_labels = [int(item) for item in (labels or [])] + [1 if point_mode == "Foreground (green)" else 0]
     try:
         ready, mask, preview, cutout, status = _predict_reference(
             image,
@@ -265,7 +265,7 @@ def select_reference_point(
         return new_points, new_labels, ready, mask, preview, cutout, status
     except Exception as exc:
         preview = _display(sam_segmenter.draw_points(image, new_points, new_labels))
-        return new_points, new_labels, None, None, preview, None, f"❌ SAM 分割失败：{exc}"
+        return new_points, new_labels, None, None, preview, None, f"❌ SAM segmentation failed: {exc}"
 
 
 def undo_reference_point(
@@ -279,11 +279,11 @@ def undo_reference_point(
     ref_feather,
 ):
     if image is None:
-        return [], [], None, None, None, None, "请先上传 Reference。"
+        return [], [], None, None, None, None, "Upload a reference image first."
     new_points = [list(item) for item in (points or [])][:-1]
     new_labels = [int(item) for item in (labels or [])][:-1]
     if not new_points:
-        return [], [], None, None, _display(image), None, "已撤销全部提示点，请重新点选主体。"
+        return [], [], None, None, _display(image), None, "All points removed. Select the subject again."
     try:
         ready, mask, preview, cutout, status = _predict_reference(
             image,
@@ -295,29 +295,29 @@ def undo_reference_point(
             ref_padding,
             ref_feather,
         )
-        return new_points, new_labels, ready, mask, preview, cutout, "↶ 已撤销最后一个点。" + status
+        return new_points, new_labels, ready, mask, preview, cutout, "↶ Last point removed. " + status
     except Exception as exc:
         preview = _display(sam_segmenter.draw_points(image, new_points, new_labels))
-        return new_points, new_labels, None, None, preview, None, f"撤销后等待有效前景点：{exc}"
+        return new_points, new_labels, None, None, preview, None, f"Add a valid foreground point after undo: {exc}"
 
 
 def clear_reference_points(image):
     if image is None:
-        return [], [], None, None, None, None, "请先上传 Reference。"
-    return [], [], None, None, _display(image), None, "提示点已清空，请重新点击绿色前景点。"
+        return [], [], None, None, None, None, "Upload a reference image first."
+    return [], [], None, None, _display(image), None, "Points cleared. Add green foreground points again."
 
 
 def use_whole_reference(image):
     if image is None:
-        raise gr.Error("请先上传 Reference。")
+        raise gr.Error("Upload a reference image first.")
     image = ImageOps.exif_transpose(image).convert("RGB")
     mask = Image.new("L", image.size, 255)
-    return image, mask, _display(image), _display(image), "✅ 已跳过 SAM，整张图片将作为独立 Reference。"
+    return image, mask, _display(image), _display(image), "✅ SAM skipped. The whole image will be used as the reference."
 
 
 def reset_target_sam(image):
     if image is None:
-        return None, [], [], None, None, None, "等待上传 Target 原图。"
+        return None, [], [], None, None, None, "Upload a target image to begin."
     image = ImageOps.exif_transpose(image).convert("RGB")
     return (
         image,
@@ -326,7 +326,7 @@ def reset_target_sam(image):
         None,
         _display(image),
         None,
-        "✅ Target 原图已加载。请在中间图片点击绿色前景点选择要修改的对象。",
+        "✅ Target loaded. Add green foreground points to select the subject.",
     )
 
 
@@ -339,10 +339,10 @@ def _predict_target_mask(
     sam1_path,
 ):
     if _generation_active():
-        raise RuntimeError("FLUX 正在生成，暂时不能重新加载 SAM；请等待当前任务完成。")
+        raise RuntimeError("FLUX is generating. Wait for the current task before loading SAM.")
     point_preview = sam_segmenter.draw_points(image, points, labels)
     if not any(label == 1 for label in labels):
-        return None, _display(point_preview), None, "已记录背景排除点，还需要至少一个绿色前景点。"
+        return None, _display(point_preview), None, "Background point recorded. Add at least one green foreground point."
     flux_inpaint.release_pipeline()
     mask, score, kind = sam_segmenter.segment_reference(
         image,
@@ -356,8 +356,8 @@ def _predict_target_mask(
     fg_count = sum(int(label) == 1 for label in labels)
     bg_count = len(labels) - fg_count
     status = (
-        f"✅ Target Mask 已生成｜{kind.upper()} score={score:.4f}｜"
-        f"前景点 {fg_count} 个，背景点 {bg_count} 个。白色区域就是最终修改范围。"
+        f"✅ Target mask ready | {kind.upper()} score={score:.4f} | "
+        f"Foreground points: {fg_count}, background points: {bg_count}. White indicates the editing region."
     )
     return mask, _display(preview), _display(mask, mask=True), status
 
@@ -373,13 +373,13 @@ def select_target_point(
     evt: gr.SelectData,
 ):
     if image is None:
-        raise gr.Error("请先上传 Target 原图。")
+        raise gr.Error("Upload a target image first.")
     index = evt.index
     if not isinstance(index, (tuple, list)) or len(index) < 2:
-        raise gr.Error("未获取到点击坐标，请重新点击图片。")
+        raise gr.Error("No click coordinates received. Click the image again.")
     full_point = _display_click_to_full(index, image)
     new_points = [list(item) for item in (points or [])] + [full_point]
-    new_labels = [int(item) for item in (labels or [])] + [1 if point_mode == "前景点（绿色）" else 0]
+    new_labels = [int(item) for item in (labels or [])] + [1 if point_mode == "Foreground (green)" else 0]
     try:
         mask, preview, mask_preview, status = _predict_target_mask(
             image, new_points, new_labels, backend, sam2_path, sam1_path
@@ -387,39 +387,39 @@ def select_target_point(
         return new_points, new_labels, mask, preview, mask_preview, status
     except Exception as exc:
         preview = _display(sam_segmenter.draw_points(image, new_points, new_labels))
-        return new_points, new_labels, None, preview, None, f"❌ Target SAM 分割失败：{exc}"
+        return new_points, new_labels, None, preview, None, f"❌ Target SAM segmentation failed: {exc}"
 
 
 def undo_target_point(image, points, labels, backend, sam2_path, sam1_path):
     if image is None:
-        return [], [], None, None, None, "请先上传 Target 原图。"
+        return [], [], None, None, None, "Upload a target image first."
     new_points = [list(item) for item in (points or [])][:-1]
     new_labels = [int(item) for item in (labels or [])][:-1]
     if not new_points:
-        return [], [], None, _display(image), None, "已撤销全部 Target 提示点。"
+        return [], [], None, _display(image), None, "All target points removed."
     try:
         mask, preview, mask_preview, status = _predict_target_mask(
             image, new_points, new_labels, backend, sam2_path, sam1_path
         )
-        return new_points, new_labels, mask, preview, mask_preview, "↶ 已撤销最后一个点。" + status
+        return new_points, new_labels, mask, preview, mask_preview, "↶ Last point removed. " + status
     except Exception as exc:
         preview = _display(sam_segmenter.draw_points(image, new_points, new_labels))
-        return new_points, new_labels, None, preview, None, f"撤销后等待有效前景点：{exc}"
+        return new_points, new_labels, None, preview, None, f"Add a valid foreground point after undo: {exc}"
 
 
 def clear_target_points(image):
     if image is None:
-        return [], [], None, None, None, "请先上传 Target 原图。"
-    return [], [], None, _display(image), None, "Target 提示点和 Mask 已清空，请重新点选。"
+        return [], [], None, None, None, "Upload a target image first."
+    return [], [], None, _display(image), None, "Target points and mask cleared. Select the target again."
 
 
 def _completed_job_session(job_id: str) -> dict:
     if not job_id:
-        raise gr.Error("请先完成一次 FLUX 生成。")
+        raise gr.Error("Run FLUX generation first.")
     with _JOBS_LOCK:
         job = _JOBS.get(job_id)
         if job is None or job.get("state") != "completed" or job.get("session") is None:
-            raise gr.Error("当前 FLUX 任务尚未完成，暂时不能进行生成后 SAM 分割。")
+            raise gr.Error("Wait for FLUX generation to finish before refining the subject.")
         return job["session"]
 
 
@@ -446,7 +446,7 @@ def _predict_generated_subject(
             None,
             session["post_final_display"],
             session["download_path"],
-            "已记录背景排除点，还需要至少一个绿色前景点。",
+            "Background point recorded. Add at least one green foreground point.",
             _metrics_html(output["metrics"]),
         )
 
@@ -495,10 +495,10 @@ def _predict_generated_subject(
     fg_count = sum(int(label) == 1 for label in labels)
     bg_count = len(labels) - fg_count
     status = (
-        f"✅ 生成后 {kind.upper()} 主体分割并合成完成｜score={score:.4f}｜"
-        f"前景点 {fg_count} 个，背景点 {bg_count} 个｜"
-        f"羽化={float(object_feather):.1f}px，Mask 调整={int(object_edge_expand):+d}px。"
-        "清理后的二值 SAM 主体已贴回；剔除的外圈会归入第一次 FLUX 背景校色区域。"
+        f"✅ Generated subject segmented and composited with {kind.upper()} | score={score:.4f} | "
+        f"Foreground points: {fg_count}, background points: {bg_count} | "
+        f"Feathering={float(object_feather):.1f}px, mask adjustment={int(object_edge_expand):+d}px."
+        "The refined binary subject has been composited. The removed edge ring is included in background harmonization."
     )
     _update_job(
         job_id,
@@ -536,11 +536,11 @@ def select_generated_subject_point(
     image = session["output"]["raw_roi"]
     index = evt.index
     if not isinstance(index, (tuple, list)) or len(index) < 2:
-        raise gr.Error("未获取到点击坐标，请重新点击生成图。")
+        raise gr.Error("No click coordinates received. Click the generated image again.")
     full_point = _display_click_to_full(index, image)
     new_points = [list(item) for item in (points or [])] + [full_point]
     new_labels = [int(item) for item in (labels or [])] + [
-        1 if point_mode == "前景点（绿色）" else 0
+        1 if point_mode == "Foreground (green)" else 0
     ]
     try:
         mask, preview, mask_preview, final, download, status, metrics = _predict_generated_subject(
@@ -558,7 +558,7 @@ def select_generated_subject_point(
         return new_points, new_labels, mask, preview, mask_preview, final, download, status, metrics
     except Exception as exc:
         preview = _display(sam_segmenter.draw_points(image, new_points, new_labels))
-        return new_points, new_labels, None, preview, None, gr.update(), gr.update(), f"❌ 生成后 SAM 分割失败：{exc}", gr.update()
+        return new_points, new_labels, None, preview, None, gr.update(), gr.update(), f"❌ Generated subject segmentation failed: {exc}", gr.update()
 
 
 def undo_generated_subject_point(
@@ -591,7 +591,7 @@ def undo_generated_subject_point(
         seam_radius,
         seam_strength,
     )
-    return new_points, new_labels, mask, preview, mask_preview, final, download, "↶ 已撤销最后一点。" + status, metrics
+    return new_points, new_labels, mask, preview, mask_preview, final, download, "↶ Last point removed. " + status, metrics
 
 
 def clear_generated_subject_points(job_id):
@@ -620,7 +620,7 @@ def clear_generated_subject_points(job_id):
         None,
         session["post_final_display"],
         session["download_path"],
-        "生成后 SAM 点与 Mask 已清空，已恢复 FLUX 默认合成结果。",
+        "Generated subject points and mask cleared. Initial FLUX composite restored.",
         _metrics_html(metrics),
     )
 
@@ -630,7 +630,7 @@ def _predict_original_subject(job_id, points, labels, backend, sam2_path, sam1_p
     image = session["output"]["source_roi"]
     point_preview = sam_segmenter.draw_points(image, points, labels)
     if not any(int(label) == 1 for label in labels):
-        return None, _display(point_preview), None, "已记录背景排除点，还需要至少一个绿色前景点。"
+        return None, _display(point_preview), None, "Background point recorded. Add at least one green foreground point."
     flux_inpaint.release_pipeline()
     mask, score, kind = sam_segmenter.segment_reference(
         image,
@@ -645,8 +645,8 @@ def _predict_original_subject(job_id, points, labels, backend, sam2_path, sam1_p
     fg_count = sum(int(label) == 1 for label in labels)
     bg_count = len(labels) - fg_count
     status = (
-        f"✅ 原图 {kind.upper()} 主体分割完成｜score={score:.4f}｜"
-        f"前景点 {fg_count} 个，背景点 {bg_count} 个。"
+        f"✅ Original subject segmented with {kind.upper()} | score={score:.4f} | "
+        f"Foreground points: {fg_count}, background points: {bg_count}."
     )
     return mask, _display(preview), _display(mask, mask=True), status
 
@@ -658,10 +658,10 @@ def select_original_subject_point(
     image = session["output"]["source_roi"]
     index = evt.index
     if not isinstance(index, (tuple, list)) or len(index) < 2:
-        raise gr.Error("未获取到点击坐标，请重新点击原图 ROI。")
+        raise gr.Error("No click coordinates received. Click the original target region again.")
     new_points = [list(item) for item in (points or [])] + [_display_click_to_full(index, image)]
     new_labels = [int(item) for item in (labels or [])] + [
-        1 if point_mode == "前景点（绿色）" else 0
+        1 if point_mode == "Foreground (green)" else 0
     ]
     try:
         mask, preview, mask_preview, status = _predict_original_subject(
@@ -670,7 +670,7 @@ def select_original_subject_point(
         return new_points, new_labels, mask, preview, mask_preview, status
     except Exception as exc:
         preview = _display(sam_segmenter.draw_points(image, new_points, new_labels))
-        return new_points, new_labels, None, preview, None, f"❌ 原图 SAM 分割失败：{exc}"
+        return new_points, new_labels, None, preview, None, f"❌ Original subject segmentation failed: {exc}"
 
 
 def undo_original_subject_point(job_id, points, labels, backend, sam2_path, sam1_path):
@@ -681,7 +681,7 @@ def undo_original_subject_point(job_id, points, labels, backend, sam2_path, sam1
     mask, preview, mask_preview, status = _predict_original_subject(
         job_id, new_points, new_labels, backend, sam2_path, sam1_path
     )
-    return new_points, new_labels, mask, preview, mask_preview, "↶ 已撤销最后一点。" + status
+    return new_points, new_labels, mask, preview, mask_preview, "↶ Last point removed. " + status
 
 
 def clear_original_subject_points(job_id):
@@ -689,7 +689,7 @@ def clear_original_subject_points(job_id):
     session.pop("original_object_mask", None)
     return (
         [], [], None, _display(session["output"]["source_roi"]), None,
-        "原图主体 SAM 点与 Mask 已清空。",
+        "Original subject points and mask cleared.",
     )
 
 
@@ -710,9 +710,9 @@ def run_background_consistency(
     seam_strength,
 ):
     if generated_subject_mask is None:
-        raise gr.Error("请先在生成图中用 SAM 选出新主体。")
+        raise gr.Error("Select the generated subject with SAM first.")
     if original_subject_mask is None:
-        raise gr.Error("请先在原图 ROI 中用 SAM 选出旧主体。")
+        raise gr.Error("Select the original subject with SAM first.")
     session = _completed_job_session(job_id)
     output = session["output"]
     sam_segmenter.release_segmenter()
@@ -734,7 +734,7 @@ def run_background_consistency(
                 background_transition_radius=float(background_edge_feather),
             )
     except Exception as exc:
-        raise gr.Error(f"第一次 FLUX 背景校色失败：{exc}") from exc
+        raise gr.Error(f"Background harmonization failed: {exc}") from exc
     finally:
         flux_inpaint.release_pipeline()
 
@@ -790,15 +790,15 @@ def run_background_consistency(
     metrics["consistency_seconds"] = consistency["seconds"]
     output["metrics"].update(metrics)
     status = (
-        f"✅ 背景处理完成｜校色背景只合成一次｜48/32/8 外圈合成｜无第二次 FLUX｜"
-        f"直接校色第一次 raw_roi｜ROI={consistency['model_size'][0]}×{consistency['model_size'][1]}｜"
-        f"耗时={consistency['seconds']:.2f}s｜背景低频色差 "
+        f"✅ Background harmonized | Single background composite | No second FLUX pass | "
+        f"First-pass background corrected | ROI={consistency['model_size'][0]}×{consistency['model_size'][1]} | "
+        f"Elapsed={consistency['seconds']:.2f}s | Low-frequency background error: "
         f"{consistency['color_lock_info']['error_before']:.2f}→"
-        f"{consistency['color_lock_info']['error_after']:.2f}｜背景外侧过渡="
-        f"{float(background_edge_feather):.1f}px｜主体边缘清理="
-        f"{int(object_edge_expand):+d}px。编辑区内的新主体外使用"
-        f"第一次 FLUX 校色背景｜旧主体清理外扩={int(original_cleanup_expand)}px｜"
-        f"新主体填底外扩={int(generated_fill_expand)}px；最后贴回完整新主体，临时底板不参与合成。"
+        f"{consistency['color_lock_info']['error_after']:.2f} | Background transition="
+        f"{float(background_edge_feather):.1f}px | Subject edge adjustment="
+        f"{int(object_edge_expand):+d}px. Background uses the "
+        f"harmonized first-pass FLUX output | Original cleanup expansion={int(original_cleanup_expand)}px | "
+        f"Generated subject exclusion margin={int(generated_fill_expand)}px. The full generated subject is pasted last; estimation images are not composited."
     )
     _update_job(
         job_id,
@@ -826,10 +826,10 @@ def _build_v4_gallery(output):
         expand_bottom=expansion.get("bottom", 0),
     )
     return [
-        (mask_box_preview, "① FLUX 生成图 + 用户 Mask 黄色外接框"),
-        (output["core_roi"], "② 用户最终合成 Mask（白色=生成区域）"),
-        (output["full_background"], "③ 原始 Target（不再生成背景底板）"),
-        (output["model_input"], "④ 模型实际输入（纯绿色=LoRA区）"),
+        (mask_box_preview, "① Generated image and mask bounding box"),
+        (output["core_roi"], "② Compositing mask (white = generated region)"),
+        (output["full_background"], "③ Original target"),
+        (output["model_input"], "④ Model input (green = LoRA region)"),
     ]
 
 
@@ -861,8 +861,8 @@ def _get_current_flux_editor():
     if missing:
         names = ", ".join(sorted(missing))
         raise RuntimeError(
-            f"flux_inpaint.py 与 app.py 版本不一致，仍缺少参数：{names}。"
-            "请确认两个文件来自同一项目目录并重新启动 Gradio。"
+            f"flux_inpaint.py and app.py are out of sync. Missing parameters: {names}. "
+            "Use matching files from the same project and restart Gradio."
         )
     return editor
 
@@ -975,22 +975,22 @@ def run_edit(
             progress_callback(message, value)
 
     if reference_ready is None:
-        raise gr.Error("Reference 尚未就绪：请完成 SAM 主体提取，或点击“整张直接作为 Reference”。")
+        raise gr.Error("Reference is not ready. Select a subject with SAM or use the whole image as reference.")
     if target_mask_mode == TARGET_SAM_MODE:
         if target_sam_source is None:
-            raise gr.Error("请在“Target SAM 自动分割”标签中上传 Target 原图。")
+            raise gr.Error("Upload the target in the Segment Target with SAM tab.")
         if target_sam_mask is None:
-            raise gr.Error("Target SAM Mask 尚未生成，请先用绿色前景点选择要修改的对象。")
+            raise gr.Error("The target mask is not ready. Add green foreground points to select the subject.")
         source = ImageOps.exif_transpose(target_sam_source).convert("RGB")
         mask = ImageOps.exif_transpose(target_sam_mask).convert("L")
-        print("[任务] Target Mask 来源：SAM 自动分割", flush=True)
+        print("[Task] Target mask source: SAM", flush=True)
     else:
-        source = decode_data_url(source_data, "目标原图").convert("RGB")
-        mask = decode_data_url(mask_data, "目标 Mask").convert("L")
-        print("[任务] Target Mask 来源：页面手绘", flush=True)
+        source = decode_data_url(source_data, "Target image").convert("RGB")
+        mask = decode_data_url(mask_data, "Target mask").convert("L")
+        print("[Task] Target mask source: drawing editor", flush=True)
     if mask.resize(source.size, Image.Resampling.NEAREST).getbbox() is None:
-        raise gr.Error("绿色目标区域为空，请先在目标图上画框或使用画笔。")
-    report("输入检查完成", 0.02)
+        raise gr.Error("The editing region is empty. Draw a rectangle or use the brush on the target image.")
+    report("Inputs validated", 0.02)
 
     try:
         sam_segmenter.release_segmenter()
@@ -1044,9 +1044,9 @@ def run_edit(
             ),
         )
     except Exception as exc:
-        raise gr.Error(f"FLUX生成失败：{exc}") from exc
+        raise gr.Error(f"FLUX generation failed: {exc}") from exc
 
-    report("单次 FLUX 替换已完成，正在按用户 Mask 直接覆盖…", 0.96)
+    report("FLUX generation finished. Compositing the masked region...", 0.96)
     flux_inpaint.release_pipeline()
     final = output["final"]
     gallery = _build_v4_gallery(output)
@@ -1063,28 +1063,28 @@ def run_edit(
     )
     halo_info = output["halo_info"]
     halo_status = (
-        f"ON · 边界误差 {halo_info['edge_error_before']:.1f}→{halo_info['edge_error_after']:.1f} · "
-        f"纹理L{halo_info['texture_blend_levels']} · "
-        f"去绿={'ON' if halo_info['despill']['applied'] else '无残边/未应用'}"
+        f"ON · Boundary error: {halo_info['edge_error_before']:.1f}→{halo_info['edge_error_after']:.1f} · "
+        f"Texture levels: {halo_info['texture_blend_levels']} · "
+        f"Despill={'ON' if halo_info['despill']['applied'] else 'No spill / not applied'}"
         if halo_info["applied"]
-        else "OFF/未应用"
+        else "OFF/Not applied"
     )
     status = (
-        f"✅ 参考图局部重绘完成｜FLUX {output['flux_pass_count']}次｜"
-        f"seed={output['seed']}｜ROI={output['roi_box_text']}｜"
-        f"黄色框={output['location_box_text']}｜"
-        f"粘贴外扩={output['blend_expand']}px｜"
-        f"外圈柔化={output['direct_edge_feather']:.0f}px｜"
-        f"接缝色匹配={'ON' if output['direct_seam_color_match'] else 'OFF'}"
-        f"({output['direct_seam_color_strength']:.2f})｜"
-        f"推理尺寸={width}×{height}｜端到端耗时={metrics['end_to_end_seconds']:.2f}s｜"
-        f"峰值显存={metrics['peak_reserved_gib']:.2f}GiB｜LoRA={lora_status}｜Halo={halo_status}"
-        f"<br>输出={'主体保留原始FLUX＋外扩背景接缝融合' if output['direct_overlay_enabled'] else '边界校色＋相似背景还原'}"
-        f"｜生成后SAM=等待手动点选｜生成后阴影合成=关闭"
-        f"<br>实际 Prompt：{output['prompt']}"
+        f"✅ Reference-guided editing complete | FLUX {output['flux_pass_count']} pass(es) | "
+        f"seed={output['seed']} | ROI={output['roi_box_text']} | "
+        f"Bounding box={output['location_box_text']} | "
+        f"Composite expansion={output['blend_expand']}px | "
+        f"Outer feathering={output['direct_edge_feather']:.0f}px | "
+        f"Seam color matching={'ON' if output['direct_seam_color_match'] else 'OFF'}"
+        f"({output['direct_seam_color_strength']:.2f}) | "
+        f"Inference size={width}×{height} | Total elapsed time={metrics['end_to_end_seconds']:.2f}s | "
+        f"Peak GPU memory={metrics['peak_reserved_gib']:.2f}GiB | LoRA={lora_status} | Halo={halo_status}"
+        f"<br>Output={'Original generated subject with outer background blending' if output['direct_overlay_enabled'] else 'Boundary color correction and background restoration'}"
+        f" | Subject SAM: waiting for selection | Shadow compositing: off"
+        f"<br>Prompt: {output['prompt']}"
     )
     print(
-        f"[统计] Gradio端到端任务耗时={metrics['end_to_end_seconds']:.2f}s",
+        f"[Metrics] Gradio total elapsed time={metrics['end_to_end_seconds']:.2f}s",
         flush=True,
     )
     session = {
@@ -1096,8 +1096,8 @@ def run_edit(
 
 
 def _run_background_edit(job_id: str, args: tuple) -> None:
-    _update_job(job_id, state="running", message="后台任务已启动，正在检查输入…", progress=2)
-    print(f"[任务 {job_id[:8]}] 后台生成任务开始", flush=True)
+    _update_job(job_id, state="running", message="Task started. Validating inputs...", progress=2)
+    print(f"[Task {job_id[:8]}] Background generation started", flush=True)
     try:
         with _GENERATION_LOCK:
             gallery, status, metrics_html, session = run_edit(
@@ -1115,7 +1115,7 @@ def _run_background_edit(job_id: str, args: tuple) -> None:
         _update_job(
             job_id,
             state="completed",
-            message="全部生成完成。",
+            message="Generation complete.",
             progress=100,
             gallery=gallery,
             status=status,
@@ -1126,20 +1126,20 @@ def _run_background_edit(job_id: str, args: tuple) -> None:
             artifact_dir=session["artifact_dir"],
         )
         _prune_finished_jobs(10)
-        print(f"[任务 {job_id[:8]}] 全部完成", flush=True)
+        print(f"[Task {job_id[:8]}] Complete", flush=True)
     except Exception as exc:
         traceback.print_exc()
-        message = f"生成失败：{exc}"
+        message = f"Generation failed: {exc}"
         _update_job(job_id, state="failed", message=message, status=message)
         _prune_finished_jobs(10)
-        print(f"[任务 {job_id[:8]}] {message}", flush=True)
+        print(f"[Task {job_id[:8]}] {message}", flush=True)
 
 
 def start_background_edit(*args):
     if _generation_active():
-        raise gr.Error("已经有一个 FLUX 任务正在运行，请等待它完成，不要重复提交。")
+        raise gr.Error("A FLUX task is already running. Wait for it to finish before submitting again.")
     job_id = uuid.uuid4().hex
-    message = "任务已提交，正在启动后台线程…"
+    message = "Task submitted. Starting generation..."
     with _JOBS_LOCK:
         _JOBS[job_id] = {
             "state": "queued",
@@ -1151,7 +1151,7 @@ def start_background_edit(*args):
             "session": None,
         }
     _JOB_EXECUTOR.submit(_run_background_edit, job_id, tuple(args))
-    print(f"[任务 {job_id[:8]}] 已提交", flush=True)
+    print(f"[Task {job_id[:8]}] Submitted", flush=True)
     return (
         job_id,
         message,
@@ -1166,15 +1166,15 @@ def start_background_edit(*args):
         [],
         None,
         None,
-        "等待 FLUX 完成后，在生成图上点击需要保留的主体。",
+        "After generation, click the subject you want to keep.",
         None,
         [],
         [],
         None,
         None,
-        "等待 FLUX 完成后，在原图 ROI 上点击需要移除的旧主体。",
+        "After generation, select the original subject in the target region.",
         None,
-        "请先完成上面的新主体和旧主体两个 SAM Mask。",
+        "Select both the generated and original subject masks first.",
     )
 
 
@@ -1190,7 +1190,7 @@ def poll_background_edit(job_id: str):
         stored = _JOBS.get(job_id)
         job = dict(stored) if stored is not None else None
     if job is None:
-        message = "任务状态已丢失，请重新提交。"
+        message = "Task state was lost. Submit the task again."
         return (
             gr.update(),
             message,
@@ -1207,23 +1207,23 @@ def poll_background_edit(job_id: str):
         )
     state = job.get("state", "running")
     progress = float(job.get("progress", 0))
-    message = job.get("message", "后台任务正在运行…")
+    message = job.get("message", "Generation is running...")
     if state == "completed":
         session = job.get("session") or {}
         output = session.get("output") or {}
         return (
             job.get("gallery"),
-            job.get("status", "✅ 生成完成。"),
-            _progress_html(100, "全部生成完成。", "completed"),
+            job.get("status", "✅ Generation complete."),
+            _progress_html(100, "Generation complete.", "completed"),
             job.get("metrics_html", _metrics_html()),
             job.get("post_final"),
             job.get("final_file"),
             gr.update(interactive=False),
             gr.update(interactive=True),
             _display(output.get("raw_roi")),
-            "✅ FLUX 已完成。请在左侧生成图点击绿色前景点，让 SAM 提取真正需要粘贴的主体。",
+            "✅ FLUX finished. Add green points on the generated image to select the subject to keep.",
             _display(output.get("source_roi")),
-            "✅ 请在原图 ROI 点击绿色前景点，让 SAM 提取并遮掉旧主体。",
+            "✅ Add green points in the original target region to select the original subject.",
         )
     if state == "failed":
         return (
@@ -1250,9 +1250,9 @@ def poll_background_edit(job_id: str):
         gr.update(interactive=True),
         gr.update(interactive=False),
         gr.update(),
-        "FLUX 正在生成，完成后才能使用生成后 SAM。",
+        "FLUX is generating. Subject refinement will be available when it finishes.",
         gr.update(),
-        "FLUX 正在生成，完成后才能选择原图旧主体。",
+        "FLUX is generating. Original subject selection will be available when it finishes.",
     )
 
 
@@ -1287,17 +1287,17 @@ def build_demo():
         original_sam_mask = gr.State(None)
 
         gr.HTML(
-            '<div class="app-hero"><h1>FLUX Reference Compositor · 参考图局部重绘</h1>'
-            '<p>第一次生成仍使用 Outpaint LoRA；之后不再运行任何扩散模型，只校正第一次背景的色差并重新合成。</p>'
-            '<div class="input-map"><span>Reference：放什么</span><b>＋</b>'
-            '<span>绿色 Mask：放哪里</span><b>＋</b><span>文字：可选要求</span>'
-            '<b>→</b><span>单次 FLUX 直接替换</span><b>→</b><span>Mask 合成</span></div></div>'
+            '<div class="app-hero"><h1>FLUX Reference Compositor · Reference-Guided Editing</h1>'
+            '<p>Generate once with Outpaint LoRA, then harmonize the background and composite the subject without another diffusion pass.</p>'
+            '<div class="input-map"><span>Reference: what to use</span><b>＋</b>'
+            '<span>Mask: where to edit</span><b>＋</b><span>Prompt: optional guidance</span>'
+            '<b>→</b><span>Single FLUX pass</span><b>→</b><span>Mask compositing</span></div></div>'
         )
 
-        gr.HTML(step_title(1, "准备 Reference 物体", "绿色点选主体，红色点排除背景；白底预览是实际送入模型的 Reference"))
+        gr.HTML(step_title(1, "Prepare the Reference", "Use green points to select the subject and red points to exclude the background. The white-background preview is sent to the model."))
         with gr.Row(equal_height=True, elem_classes="reference-row"):
             reference_upload = gr.Image(
-                label="A. 上传 Reference 原图",
+                label="A. Upload reference image",
                 source="upload",
                 type="pil",
                 height=315,
@@ -1305,22 +1305,22 @@ def build_demo():
             )
             with gr.Column(scale=2, min_width=320, elem_classes="reference-panel"):
                 reference_preview = gr.Image(
-                    label="B. 点击这里添加提示点",
+                    label="B. Click to add prompt points",
                     type="pil",
                     interactive=True,
                     height=255,
                 )
                 point_mode = gr.Radio(
-                    ["前景点（绿色）", "背景排除点（红色）"],
-                    value="前景点（绿色）",
-                    label="当前点击类型",
+                    ["Foreground (green)", "Background (red)"],
+                    value="Foreground (green)",
+                    label="Point type",
                     elem_classes="sam-mode",
                 )
                 with gr.Row():
-                    undo_point = gr.Button("↶ 撤销一点")
-                    clear_points = gr.Button("清空提示点")
+                    undo_point = gr.Button("Undo point")
+                    clear_points = gr.Button("Clear points")
             reference_cutout = gr.Image(
-                label="C. 实际 Reference（白底主体）",
+                label="C. Reference cutout",
                 type="pil",
                 interactive=False,
                 height=315,
@@ -1328,21 +1328,21 @@ def build_demo():
                 elem_classes="reference-ready",
             )
         with gr.Row():
-            whole_reference = gr.Button("Reference 已经抠好？整张直接作为 Reference")
-            sam_status = gr.Markdown("等待上传 Reference 原图。", elem_classes="status-panel")
+            whole_reference = gr.Button("Use the whole image as reference")
+            sam_status = gr.Markdown("Upload a reference image to begin.", elem_classes="status-panel")
 
-        gr.HTML('<div class="workflow-section">' + step_title(2, "确定 Target 修改区域", "可手动画绿色区域，也可以用 SAM 前景点自动分割要修改的对象") + '</div>')
+        gr.HTML('<div class="workflow-section">' + step_title(2, "Select the Target Region", "Draw an editing region or use SAM points to select the target subject.") + '</div>')
         with gr.Tabs(selected="target-draw", elem_classes="target-mode-tabs"):
-            with gr.TabItem("手动画绿色区域", id="target-draw") as target_draw_tab:
+            with gr.TabItem("Draw Mask", id="target-draw") as target_draw_tab:
                 gr.HTML(EDITOR_HTML)
-            with gr.TabItem("SAM 自动分割 Target", id="target-sam") as target_sam_tab:
+            with gr.TabItem("Segment Target with SAM", id="target-sam") as target_sam_tab:
                 gr.Markdown(
-                    "上传 Target 原图，在对象内部点击绿色前景点；分割范围过大时添加红色背景排除点。",
+                    "Upload the target and add green points inside the subject. Add red background points to refine the selection.",
                     elem_classes="hint-panel",
                 )
                 with gr.Row(equal_height=True, elem_classes="reference-row"):
                     target_sam_upload = gr.Image(
-                        label="A. 上传 Target 原图",
+                        label="A. Upload target image",
                         source="upload",
                         type="pil",
                         height=330,
@@ -1350,55 +1350,55 @@ def build_demo():
                     )
                     with gr.Column(scale=2, min_width=320, elem_classes="reference-panel"):
                         target_sam_preview = gr.Image(
-                            label="B. 点击选择要修改的对象",
+                            label="B. Click to select the target",
                             type="pil",
                             interactive=True,
                             height=265,
                         )
                         target_point_mode = gr.Radio(
-                            ["前景点（绿色）", "背景排除点（红色）"],
-                            value="前景点（绿色）",
-                            label="当前点击类型",
+                            ["Foreground (green)", "Background (red)"],
+                            value="Foreground (green)",
+                            label="Point type",
                             elem_classes="sam-mode",
                         )
                         with gr.Row():
-                            undo_target = gr.Button("↶ 撤销一点")
-                            clear_target = gr.Button("清空 Target 点")
+                            undo_target = gr.Button("Undo point")
+                            clear_target = gr.Button("Clear target points")
                     target_mask_preview = gr.Image(
-                        label="C. Target 二值 Mask（白色=修改）",
+                        label="C. Target mask (white = edit)",
                         type="pil",
                         interactive=False,
                         height=330,
                         scale=2,
                     )
                 target_sam_status = gr.Markdown(
-                    "等待上传 Target 原图。",
+                    "Upload a target image to begin.",
                     elem_classes="status-panel",
                 )
 
-        gr.HTML('<div class="workflow-section">' + step_title(3, "添加可选要求并生成", "文字可留空；系统仍会自动执行 Reference 物体迁移") + '</div>')
+        gr.HTML('<div class="workflow-section">' + step_title(3, "Generate", "Optionally describe the desired edit, then generate with the reference image.") + '</div>')
         with gr.Row(elem_classes="generate-row"):
             prompt = gr.Textbox(
-                label="可选文字要求",
-                placeholder="例如：朝向左侧、放在桌面上、保持产品标签；不输入也可以",
+                label="Optional prompt",
+                placeholder="For example: face left, place on the table, preserve the product label. You can leave this blank.",
                 lines=3,
                 scale=5,
             )
             with gr.Column(scale=2, min_width=290, elem_classes="generate-panel"):
-                gr.Markdown("绿色目标区和右侧白底 Reference 都确认后即可生成。", elem_classes="hint-panel")
-                generate = gr.Button("开始 Reference 局部重绘", variant="primary", elem_classes="generate-action")
+                gr.Markdown("Check the target mask and reference cutout, then generate.", elem_classes="hint-panel")
+                generate = gr.Button("Generate", variant="primary", elem_classes="generate-action")
 
-        status = gr.Markdown("等待完成前两步。", elem_classes="status-panel")
-        generation_progress = gr.HTML(_progress_html(0, "等待 FLUX 生成任务。"))
+        status = gr.Markdown("Prepare the reference and target first.", elem_classes="status-panel")
+        generation_progress = gr.HTML(_progress_html(0, "Ready to generate."))
         generation_metrics = gr.HTML(_metrics_html())
         generation_poll = gr.Button(
-            "刷新生成状态",
+            "Refresh generation status",
             elem_id="green-generation-poll",
             elem_classes="poll-trigger",
             interactive=False,
         )
         output_gallery = gr.Gallery(
-            label="轻量诊断图（原尺寸最终图请在下方下载）",
+            label="Diagnostic previews (download the full-resolution result below)",
             columns=3,
             height=440,
             elem_classes="result-gallery",
@@ -1406,29 +1406,29 @@ def build_demo():
         gr.HTML(
             '<div class="workflow-section">' + step_title(
                 4,
-                "用 SAM 提取生成主体并重新合成",
-                "在生成图点击绿色前景点选择新主体；分割过大时添加红色背景排除点",
+                "Refine the Generated Subject",
+                "Add green points to select the generated subject and red points to exclude the background.",
             ) + '</div>'
         )
         with gr.Row(equal_height=True, elem_classes="reference-row"):
             with gr.Column(scale=2):
                 generated_sam_preview = gr.Image(
-                    label="A. 点击 FLUX 生成图选择要保留的主体",
+                    label="A. Select the subject in the generated image",
                     type="pil",
                     interactive=True,
                     height=360,
                 )
                 generated_sam_point_mode = gr.Radio(
-                    ["前景点（绿色）", "背景排除点（红色）"],
-                    value="前景点（绿色）",
-                    label="当前点击类型",
+                    ["Foreground (green)", "Background (red)"],
+                    value="Foreground (green)",
+                    label="Point type",
                     elem_classes="sam-mode",
                 )
                 with gr.Row():
-                    undo_generated_sam = gr.Button("↶ 撤销一点")
-                    clear_generated_sam = gr.Button("清空生成后 SAM 点并恢复默认结果")
+                    undo_generated_sam = gr.Button("Undo point")
+                    clear_generated_sam = gr.Button("Clear points and restore initial result")
             generated_sam_mask_preview = gr.Image(
-                label="B. 新主体 SAM Mask（白色=最终粘贴）",
+                label="B. Generated subject mask (white = keep)",
                 type="pil",
                 interactive=False,
                 height=360,
@@ -1440,229 +1440,229 @@ def build_demo():
         with gr.Row():
             generated_object_expand = gr.Slider(
                 -8, 8, value=0, step=1,
-                label="主体边缘调整 px（默认 0；仅修正 SAM 轮廓）"
+                label="Subject mask adjustment (px, default: 0)"
             )
-            gr.Markdown("主体 Mask 内部固定为二值合成：羽化=0、接缝高斯=0。")
+            gr.Markdown("The subject uses a binary mask without feathering or Gaussian seam blending.")
         generated_sam_status = gr.Markdown(
-            "等待 FLUX 完成后，在生成图上点击需要保留的主体。",
+            "After generation, click the subject you want to keep.",
             elem_classes="status-panel",
         )
         with gr.Row(equal_height=True, elem_classes="reference-row"):
             with gr.Column(scale=2):
                 original_sam_preview = gr.Image(
-                    label="C. 点击原图 ROI 选择需要移除的旧主体",
+                    label="C. Select the original subject to remove",
                     type="pil",
                     interactive=True,
                     height=360,
                 )
                 original_sam_point_mode = gr.Radio(
-                    ["前景点（绿色）", "背景排除点（红色）"],
-                    value="前景点（绿色）",
-                    label="当前点击类型",
+                    ["Foreground (green)", "Background (red)"],
+                    value="Foreground (green)",
+                    label="Point type",
                     elem_classes="sam-mode",
                 )
                 with gr.Row():
-                    undo_original_sam = gr.Button("↶ 撤销一点")
-                    clear_original_sam = gr.Button("清空原图主体 SAM 点")
+                    undo_original_sam = gr.Button("Undo point")
+                    clear_original_sam = gr.Button("Clear original subject points")
             original_sam_mask_preview = gr.Image(
-                label="D. 原图旧主体 SAM Mask（白色=一致性处理前遮掉）",
+                label="D. Original subject mask (white = exclude from color estimation)",
                 type="pil",
                 interactive=False,
                 height=360,
                 scale=2,
             )
         original_sam_status = gr.Markdown(
-            "等待 FLUX 完成后，在原图 ROI 上点击需要移除的旧主体。",
+            "After generation, select the original subject in the target region.",
             elem_classes="status-panel",
         )
 
         gr.HTML(
             '<div class="workflow-section">' + step_title(
                 5,
-                "直接校色第一次 FLUX 背景（测试版）",
-                "第二次基础 FLUX 和一致性 LoRA 均已关闭；保留双 SAM、色差锁定与最终主体贴回",
+                "Harmonize & Composite",
+                "Use both subject masks to harmonize the background and composite the final subject.",
             ) + '</div>'
         )
-        with gr.Accordion("第一次 FLUX 背景校色参数", open=True):
+        with gr.Accordion("Background Harmonization", open=True):
             with gr.Row():
                 consistency_original_cleanup_expand = gr.Slider(
                     0, 48, value=12, step=1,
-                    label="旧主体 SAM 向外膨胀 px",
+                    label="Original subject mask expansion (px)",
                 )
                 consistency_generated_fill_expand = gr.Slider(
                     0, 48, value=16, step=1,
-                    label="新主体条件底板外扩 px",
+                    label="Generated subject exclusion margin (px)",
                 )
-                consistency_fill_radius = gr.Slider(8, 160, value=48, step=4, label="遮挡区背景估算半径 px")
+                consistency_fill_radius = gr.Slider(8, 160, value=48, step=4, label="Background estimation radius (px)")
             with gr.Row():
                 consistency_color_lock = gr.Slider(
-                    0.0, 1.0, value=0.9, step=0.05, label="Target 背景色差锁定强度"
+                    0.0, 1.0, value=0.9, step=0.05, label="Target color matching strength"
                 )
                 consistency_color_radius = gr.Slider(
-                    8, 256, value=64, step=8, label="色差场平滑半径 px"
+                    8, 256, value=64, step=8, label="Color field smoothing radius (px)"
                 )
                 consistency_color_max_delta = gr.Slider(
-                    8, 128, value=72, step=4, label="最大 RGB 校正量"
+                    8, 128, value=72, step=4, label="Maximum RGB correction"
                 )
                 consistency_background_feather = gr.Slider(
                     0.0, 32.0, value=12.0, step=0.5,
-                    label="旧主体清除区外侧余弦过渡 px（内部保持实心）"
+                    label="Original subject repair transition (px)"
                 )
             gr.Markdown(
-                "这一阶段只做 CPU 背景校色，不会运行第二次 FLUX。"
-                "主体遮挡用于排除色差估算中的主体颜色；完整背景校色后仅调用一次 48/32/8 外圈合成器；"
-                "不保留未校色的 direct_final，也不叠加第二个局部背景层，最后贴第一次 FLUX 输出的完整新主体 SAM；"
-                "临时去主体底板不会进入最终图。"
+                "Background harmonization runs on the CPU without another FLUX pass. "
+                "Subject masks exclude subject colors from background estimation. The corrected background is blended once, "
+                "then the complete generated subject is composited on top. "
+                "Temporary estimation images are not used as final pixels."
             )
-        run_consistency = gr.Button("校色第一次背景并贴回完整主体", variant="primary")
+        run_consistency = gr.Button("Harmonize & Composite", variant="primary")
         consistency_status = gr.Markdown(
-            "请先完成上面的新主体和旧主体两个 SAM Mask。",
+            "Select both the generated and original subject masks first.",
             elem_classes="status-panel",
         )
         consistency_background_preview = gr.Image(
-            label="第一次 FLUX 校色背景 ROI（无第二次模型生成）",
+            label="Harmonized background preview",
             type="pil",
             interactive=False,
             height=360,
         )
         post_final_preview = gr.Image(
-            label="最终合成（第一次背景校色后贴回完整新主体）",
+            label="Final composite",
             type="pil",
             interactive=False,
             height=560,
         )
         final_download = gr.File(
-            label="下载原尺寸无损 PNG",
+            label="Download full-resolution PNG",
             interactive=False,
         )
 
-        with gr.Accordion("FLUX 高级参数", open=False):
-            gr.Markdown("默认适合蒸馏 4B；Base-4B 建议 Steps 28–50、Guidance 4–8。")
-            model_path = gr.Textbox(label="模型路径或 Hugging Face ID", value=flux_inpaint.DEFAULT_MODEL_PATH)
+        with gr.Accordion("FLUX Settings", open=False):
+            gr.Markdown("Defaults are for the distilled 4B model. For Base-4B, try 28–50 steps and guidance 4–8.")
+            model_path = gr.Textbox(label="Model path or Hugging Face ID", value=flux_inpaint.DEFAULT_MODEL_PATH)
             with gr.Row():
                 steps = gr.Slider(1, 50, value=4, step=1, label="Steps")
                 guidance = gr.Slider(0, 10, value=1.0, step=0.1, label="Guidance")
                 strength = gr.Slider(0.1, 1.0, value=1.0, step=0.05, label="Strength")
-                seed = gr.Number(value=-1, precision=0, label="Seed（-1 随机）")
+                seed = gr.Number(value=-1, precision=0, label="Seed (-1 = random)")
             with gr.Row():
-                max_roi_side = gr.Slider(512, 2048, value=1024, step=16, label="ROI 最长边")
-                roi_context = gr.Slider(0.05, 1.5, value=0.45, step=0.05, label="ROI 上下文比例")
-                use_roi = gr.Checkbox(value=True, label="只推理 Mask 周边 ROI")
+                max_roi_side = gr.Slider(512, 2048, value=1024, step=16, label="Maximum ROI side")
+                roi_context = gr.Slider(0.05, 1.5, value=0.45, step=0.05, label="ROI context ratio")
+                use_roi = gr.Checkbox(value=True, label="Process only the region around the mask")
             gr.Markdown(
-                "黄色框默认紧贴绿色 Mask。下面四项按原图像素向外扩展黄色框，并参与 FLUX ROI 定位；"
-                "ROI 上下文比例还会在黄色框之外补充模型观察范围。"
+                "The yellow bounding box follows the mask. Expand each side below in original-image pixels. "
+                "The context ratio adds scene context beyond this box."
             )
             with gr.Row():
-                bbox_expand_left = gr.Slider(0, 1024, value=0, step=4, label="黄色框向左外扩 px")
-                bbox_expand_right = gr.Slider(0, 1024, value=0, step=4, label="黄色框向右外扩 px")
+                bbox_expand_left = gr.Slider(0, 1024, value=0, step=4, label="Left bounding-box expansion (px)")
+                bbox_expand_right = gr.Slider(0, 1024, value=0, step=4, label="Right bounding-box expansion (px)")
             with gr.Row():
-                bbox_expand_top = gr.Slider(0, 1024, value=0, step=4, label="黄色框向上外扩 px")
-                bbox_expand_bottom = gr.Slider(0, 1024, value=0, step=4, label="黄色框向下外扩 px")
+                bbox_expand_top = gr.Slider(0, 1024, value=0, step=4, label="Top bounding-box expansion (px)")
+                bbox_expand_bottom = gr.Slider(0, 1024, value=0, step=4, label="Bottom bounding-box expansion (px)")
             with gr.Row():
-                model_mask_expand = gr.Slider(0, 64, value=8, step=1, label="模型 Mask 外扩")
-                model_mask_blur = gr.Slider(0, 32, value=8, step=1, label="模型 Mask 模糊")
+                model_mask_expand = gr.Slider(0, 64, value=8, step=1, label="Model mask expansion")
+                model_mask_blur = gr.Slider(0, 32, value=8, step=1, label="Model mask blur")
                 blend_expand = gr.Slider(
                     0,
                     128,
                     value=48,
                     step=1,
-                    label="生成图粘贴向外扩展 px（四周）",
+                    label="Composite expansion (px)",
                 )
                 direct_edge_feather = gr.Slider(
                     0,
                     64,
                     value=32,
                     step=1,
-                    label="拼接外圈柔化 px（不影响内部主体）",
+                    label="Outer blend feathering (px)",
                 )
             with gr.Row():
                 direct_seam_color_match = gr.Checkbox(
                     value=True,
-                    label="接缝背景低频颜色匹配",
+                    label="Match low-frequency seam colors",
                 )
                 direct_seam_color_strength = gr.Slider(
                     0.0,
                     1.0,
                     value=0.9,
                     step=0.05,
-                    label="接缝颜色匹配强度",
+                    label="Seam color matching strength",
                 )
             with gr.Row():
                 cpu_offload = gr.Checkbox(value=True, label="CPU offload")
-                local_files_only = gr.Checkbox(value=True, label="只读本地模型")
+                local_files_only = gr.Checkbox(value=True, label="Local models only")
 
-        with gr.Accordion("Outpaint LoRA（纯绿色训练版）", open=True):
+        with gr.Accordion("Outpaint LoRA", open=True):
             gr.Markdown(
-                "官方来源：`fal/flux-2-klein-4B-outpaint-lora`。启用时会把模型 Mask 区域真正改成纯绿色 `#00FF00`，"
-                "不是只改变网页覆盖层。权重建议从 1.1 开始。"
+                "Source: `fal/flux-2-klein-4B-outpaint-lora`. When enabled, the masked model input is filled with green (`#00FF00`). "
+                "This affects the model input, not just the preview overlay. Start with a scale of 1.1."
             )
             with gr.Row():
-                lora_enabled = gr.Checkbox(value=True, label="加载 Outpaint LoRA")
-                green_screen_input = gr.Checkbox(value=True, label="模型输入使用纯绿色 Mask")
+                lora_enabled = gr.Checkbox(value=True, label="Enable Outpaint LoRA")
+                green_screen_input = gr.Checkbox(value=True, label="Use green mask in model input")
                 lora_scale = gr.Slider(0.0, 2.0, value=1.1, step=0.05, label="LoRA Scale")
             direct_overlay_enabled = gr.Checkbox(
                 value=True,
-                label="主体保留原始 FLUX，仅融合外扩背景（推荐）",
+                label="Preserve generated subject; blend outer background (recommended)",
             )
             lora_path = gr.Textbox(
-                label="LoRA 本地目录或 Hugging Face ID",
+                label="LoRA directory or Hugging Face ID",
                 value=flux_inpaint.DEFAULT_LORA_PATH,
             )
             lora_weight_name = gr.Textbox(
-                label="LoRA 权重文件名",
+                label="LoRA weight filename",
                 value=flux_inpaint.DEFAULT_LORA_WEIGHT_NAME,
             )
             gr.Markdown(
-                f"若不使用本地目录，可填写 `{flux_inpaint.OUTPAINT_LORA_REPO}`，并取消“只读本地模型”以允许首次下载。"
+                f"To download weights, enter `{flux_inpaint.OUTPAINT_LORA_REPO}` and disable Local models only."
             )
 
-        with gr.Accordion("接缝色差 / Halo 修复", open=True):
+        with gr.Accordion("Seam & Halo Correction", open=True):
             gr.Markdown(
-                "使用空间变化的低频色场：分别从 Mask 外侧读取相邻原图背景，再与内侧 FLUX 结果比较，"
-                "天空、云、墙面和阴影各自校正，不再共用一组 RGB 参数。校正仍严格限制在用户 Mask 内。"
+                "Match local background colors around the mask using a spatially varying low-frequency field. "
+                "Sky, clouds, walls, and shadows receive local corrections within the editing mask."
             )
             with gr.Row():
-                halo_fix_enabled = gr.Checkbox(value=True, label="启用边界颜色校正")
-                halo_luminance_only = gr.Checkbox(value=False, label="仅校正亮度（不校正色偏）")
-                halo_strength = gr.Slider(0.0, 1.0, value=1.0, step=0.05, label="校正强度")
+                halo_fix_enabled = gr.Checkbox(value=True, label="Enable boundary color correction")
+                halo_luminance_only = gr.Checkbox(value=False, label="Correct luminance only")
+                halo_strength = gr.Slider(0.0, 1.0, value=1.0, step=0.05, label="Correction strength")
             with gr.Row():
-                halo_ring_width = gr.Slider(4, 96, value=32, step=2, label="局部外环采样宽度 px")
-                halo_fade_radius = gr.Slider(16, 512, value=192, step=16, label="空间传播半径 px")
-                halo_interior_strength = gr.Slider(0.0, 1.0, value=0.35, step=0.05, label="内部最低校正比例")
+                halo_ring_width = gr.Slider(4, 96, value=32, step=2, label="Outer sampling ring width (px)")
+                halo_fade_radius = gr.Slider(16, 512, value=192, step=16, label="Color propagation radius (px)")
+                halo_interior_strength = gr.Slider(0.0, 1.0, value=0.35, step=0.05, label="Minimum interior correction")
             with gr.Row():
-                texture_blend_enabled = gr.Checkbox(value=True, label="启用云层/纹理多频段融合")
-                texture_blend_levels = gr.Slider(1, 6, value=4, step=1, label="纹理融合层级")
-                green_despill_enabled = gr.Checkbox(value=True, label="抑制绿色 Mask 残边")
-                green_despill_width = gr.Slider(2, 48, value=24, step=2, label="绿/紫残边检测宽度 px")
+                texture_blend_enabled = gr.Checkbox(value=True, label="Enable multiband texture blending")
+                texture_blend_levels = gr.Slider(1, 6, value=4, step=1, label="Texture pyramid levels")
+                green_despill_enabled = gr.Checkbox(value=True, label="Suppress green mask spill")
+                green_despill_width = gr.Slider(2, 48, value=24, step=2, label="Green/magenta spill detection width (px)")
             with gr.Row():
                 background_similarity_threshold = gr.Slider(
                     1,
                     128,
                     value=32,
                     step=1,
-                    label="背景相似色差阈值",
+                    label="Background color similarity threshold",
                 )
                 background_restore_strength = gr.Slider(
                     0.0,
                     1.0,
                     value=0.85,
                     step=0.05,
-                    label="相似背景还原强度",
+                    label="Similar-background restoration strength",
                 )
             gr.Markdown(
-                "这类天空+建筑的大 Mask 推荐：强度 1.0、外环 32px、传播 192–256px、内部 0.35；"
-                "云层接缝使用纹理融合 4–5 层；最终融合外扩保持 0。色差阈值越大，越多生成区域会被认作背景；"
-                "还原强度越大，相似背景越接近原图。"
+                "For large sky/building masks, try strength 1.0, ring width 32px, propagation 192–256px, and interior correction 0.35. "
+                "Try 4–5 texture levels for cloud seams. A higher similarity threshold classifies more generated pixels as background. "
+                "Higher restoration strength keeps similar background regions closer to the original."
             )
 
-        with gr.Accordion("SAM 高级参数", open=False):
-            backend = gr.Radio(["sam2", "auto", "sam1"], value="sam2", label="SAM 后端（v4默认SAM2）")
-            sam2_path = gr.Textbox(label="SAM2 模型目录或 HF ID", value=sam_segmenter.DEFAULT_SAM2_PATH)
+        with gr.Accordion("SAM Settings", open=False):
+            backend = gr.Radio(["sam2", "auto", "sam1"], value="sam2", label="SAM backend")
+            sam2_path = gr.Textbox(label="SAM2 directory or Hugging Face ID", value=sam_segmenter.DEFAULT_SAM2_PATH)
             sam1_path = gr.Textbox(label="SAM1 vit_h checkpoint", value=sam_segmenter.DEFAULT_SAM1_PATH)
             ref_feather = gr.State(0.0)
             with gr.Row():
-                ref_padding = gr.Slider(0, 0.5, value=0.10, step=0.01, label="Reference 裁剪留白")
-                gr.Markdown("Reference 抠图固定使用二值 Mask，羽化=0。")
+                ref_padding = gr.Slider(0, 0.5, value=0.10, step=0.01, label="Reference crop padding")
+                gr.Markdown("Reference cutouts use a binary mask without feathering.")
 
         target_draw_tab.select(
             lambda: TARGET_DRAW_MODE,
@@ -1980,7 +1980,7 @@ def parse_args():
 
 if __name__ == "__main__":
     if not gr.__version__.startswith("3."):
-        raise RuntimeError(f"本项目要求 Gradio 3，当前为 {gr.__version__}；请安装 gradio==3.39.0。")
+        raise RuntimeError(f"This project requires Gradio 3. Installed: {gr.__version__}. Install gradio==3.39.0.")
     args = parse_args()
     build_demo().queue(concurrency_count=1).launch(
         server_name=args.server_name,

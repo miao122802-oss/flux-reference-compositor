@@ -116,7 +116,7 @@ def run_layered_diffusion(
         pass_seconds[label] = time.perf_counter() - started
         return image
 
-    object_layer = invoke(1, "Reference 直接替换扩散", object_prompt, image_reference=reference_model)
+    object_layer = invoke(1, "Reference-guided diffusion", object_prompt, image_reference=reference_model)
     return {
         # Kept for callers that display diagnostics. It now always means that
         # no generated background layer exists; the original Target is used.
@@ -184,10 +184,10 @@ def load_pipeline(
     )
     with _PIPE_LOCK:
         if _PIPE is not None and _PIPE_KEY == key:
-            print(f"[FLUX] 使用已缓存模型：{key.model_path}", flush=True)
+            print(f"[FLUX] Using cached model: {key.model_path}", flush=True)
             if key.lora_enabled:
                 _set_lora_scale(_PIPE, lora_scale, key.lora_adapter_name)
-                print(f"[LoRA] 使用已缓存适配器，scale={float(lora_scale):.3f}", flush=True)
+                print(f"[LoRA] Using cached adapter, scale={float(lora_scale):.3f}", flush=True)
             return _PIPE
         _PIPE = None
         _PIPE_KEY = None
@@ -197,22 +197,22 @@ def load_pipeline(
             from diffusers import Flux2KleinInpaintPipeline
         except (ImportError, AttributeError) as exc:
             raise RuntimeError(
-                "当前 diffusers 不包含 Flux2KleinInpaintPipeline。请按 README 安装最新版 diffusers（git main）。"
+                "Flux2KleinInpaintPipeline is unavailable. Install Diffusers from its main branch as described in the README."
             ) from exc
         if not torch.cuda.is_available():
-            raise RuntimeError("FLUX.2 Klein 需要 CUDA GPU；当前 PyTorch 未检测到 CUDA。")
-        print(f"[FLUX] 开始从本地加载模型：{key.model_path}", flush=True)
+            raise RuntimeError("FLUX.2 Klein requires a CUDA GPU. PyTorch did not detect CUDA.")
+        print(f"[FLUX] Loading model: {key.model_path}", flush=True)
         print(f"[FLUX] dtype=bfloat16, cpu_offload={key.cpu_offload}, local_only={key.local_files_only}", flush=True)
         load_started = time.perf_counter()
         pipe = Flux2KleinInpaintPipeline.from_pretrained(
             key.model_path, torch_dtype=torch.bfloat16, local_files_only=key.local_files_only
         )
-        print(f"[FLUX] from_pretrained 完成，耗时 {time.perf_counter() - load_started:.1f}s", flush=True)
+        print(f"[FLUX] from_pretrained completed in {time.perf_counter() - load_started:.1f}s", flush=True)
         if key.lora_enabled:
             if not key.lora_path:
-                raise ValueError("已启用 LoRA，但 LoRA 路径/Hugging Face ID 为空。")
+                raise ValueError("LoRA is enabled but its path or Hugging Face ID is empty.")
             if not hasattr(pipe, "load_lora_weights") or not hasattr(pipe, "set_adapters"):
-                raise RuntimeError("当前 Diffusers Pipeline 不支持 FLUX.2 LoRA，请升级最新版 diffusers 和 peft。")
+                raise RuntimeError("This pipeline does not support FLUX.2 LoRA. Update Diffusers and PEFT.")
             lora_started = time.perf_counter()
             lora_kwargs = {
                 "adapter_name": key.lora_adapter_name,
@@ -221,20 +221,20 @@ def load_pipeline(
             if key.lora_weight_name:
                 lora_kwargs["weight_name"] = key.lora_weight_name
             print(
-                f"[LoRA] 正在加载 {key.lora_path} / {key.lora_weight_name or '自动选择权重'}",
+                f"[LoRA] Loading {key.lora_path} / {key.lora_weight_name or 'auto-selected weights'}",
                 flush=True,
             )
             pipe.load_lora_weights(key.lora_path, **lora_kwargs)
             _set_lora_scale(pipe, lora_scale, key.lora_adapter_name)
             print(
-                f"[LoRA] 加载完成，scale={float(lora_scale):.3f}，耗时 {time.perf_counter() - lora_started:.1f}s",
+                f"[LoRA] Loaded, scale={float(lora_scale):.3f}, elapsed {time.perf_counter() - lora_started:.1f}s",
                 flush=True,
             )
         if key.cpu_offload:
-            print("[FLUX] 正在启用 model CPU offload…", flush=True)
+            print("[FLUX] Enabling model CPU offload...", flush=True)
             pipe.enable_model_cpu_offload()
         else:
-            print("[FLUX] 正在把完整模型移动到 CUDA…", flush=True)
+            print("[FLUX] Moving model to CUDA...", flush=True)
             pipe.to("cuda")
         if hasattr(pipe, "vae"):
             if hasattr(pipe.vae, "enable_tiling"):
@@ -242,7 +242,7 @@ def load_pipeline(
             if hasattr(pipe.vae, "enable_slicing"):
                 pipe.vae.enable_slicing()
         _PIPE, _PIPE_KEY = pipe, key
-        print(f"[FLUX] 模型准备完成，总耗时 {time.perf_counter() - load_started:.1f}s", flush=True)
+        print(f"[FLUX] Model ready in {time.perf_counter() - load_started:.1f}s", flush=True)
         return pipe
 
 
@@ -309,7 +309,7 @@ def prepare_consistency_backgrounds(
         lambda value: 255 if value >= 128 else 0
     )
     if background_mask.getbbox() is None:
-        raise ValueError("新主体覆盖了整个用户 Mask，没有剩余背景可做一致性处理。")
+        raise ValueError("The generated subject covers the entire editing mask. No background remains for harmonization.")
     return {
         # Target reference removes its old subject. The generated conditioning
         # plate removes both masks because first-pass pixels in the old-only
@@ -413,7 +413,7 @@ def edit_background_consistency(
         Image.new("L", source_roi.size, 255),
         prepared["generated_subject_mask"],
     )
-    report("已跳过第二次 FLUX，正在校正第一次生成背景的低频色差…", 0.25)
+    report("Harmonizing the first-pass background without another FLUX pass...", 0.25)
     color_matched_roi, color_lock_info = match_reference_background_colors(
         source_roi,
         raw_roi,
@@ -435,7 +435,7 @@ def edit_background_consistency(
     # the old-subject repair alpha.  The complete ROI is returned only as a
     # carrier image; app.py pastes from it exclusively through transition_alpha.
     consistent_roi = seam_matched_roi
-    report("第一次 FLUX 背景校色完成，准备贴回完整 SAM 主体…", 0.95)
+    report("Background harmonized. Preparing to composite the complete SAM subject...", 0.95)
     return {
         **prepared,
         "raw_consistency_roi": raw_roi,
@@ -520,12 +520,12 @@ def edit_with_reference(
     source_input_size = source.size
     reference_input_size = reference.size
     preprocess_started = time.perf_counter()
-    report("正在整理原图、Mask 和 Reference…", 0.05)
-    print("[任务] 开始整理原图、Mask、Reference 和 ROI", flush=True)
+    report("Preparing target, mask, and reference...", 0.05)
+    print("[Task] Preparing target, mask, reference, and ROI", flush=True)
     source = rgb(source)
     core_mask = normalize_mask(mask, source.size)
     if core_mask.getbbox() is None:
-        raise ValueError("Mask 为空，请先在源图上绘制编辑区域。")
+        raise ValueError("The mask is empty. Draw an editing region on the target image first.")
     reference = rgb(reference)
     location_box = mask_bbox_with_context(
         core_mask,
@@ -575,7 +575,7 @@ def edit_with_reference(
     actual_seed = random.SystemRandom().randint(0, 2**31 - 1) if int(seed) < 0 else int(seed)
     preprocess_seconds = time.perf_counter() - preprocess_started
 
-    report("正在加载 FLUX.2 Klein 与 Outpaint LoRA…" if lora_enabled else "正在加载 FLUX.2 Klein…", 0.15)
+    report("Loading FLUX.2 Klein and Outpaint LoRA..." if lora_enabled else "Loading FLUX.2 Klein...", 0.15)
     pipeline_started = time.perf_counter()
     pipe = load_pipeline(
         model_path,
@@ -589,9 +589,9 @@ def edit_with_reference(
     pipeline_prepare_seconds = time.perf_counter() - pipeline_started
 
     pass_count = 1
-    report("FLUX 模型已就绪，准备开始扩散…", 0.25)
+    report("FLUX is ready. Starting generation...", 0.25)
     print(
-        f"[任务] seed={actual_seed}, ROI={bbox_text(roi_box)}, "
+        f"[Task] seed={actual_seed}, ROI={bbox_text(roi_box)}, "
         f"model_size={source_model.width}x{source_model.height}, steps={int(num_inference_steps)}",
         flush=True,
     )
@@ -614,10 +614,10 @@ def edit_with_reference(
                 allocated = torch.cuda.memory_allocated() / gib
                 reserved = torch.cuda.memory_reserved() / gib
                 peak = torch.cuda.max_memory_reserved() / gib
-                memory_text = f"｜显存 alloc={allocated:.1f}G reserved={reserved:.1f}G peak={peak:.1f}G"
+                memory_text = f" | GPU memory alloc={allocated:.1f}G reserved={reserved:.1f}G peak={peak:.1f}G"
             message = (
-                f"{label} {completed}/{total}｜{seconds_per_step:.1f}s/step｜"
-                f"预计剩余 {eta:.0f}s{memory_text}"
+                f"{label} {completed}/{total} | {seconds_per_step:.1f}s/step | "
+                f"ETA: {eta:.0f}s{memory_text}"
             )
             fraction = ((pass_index - 1) + completed / total) / pass_count
             report(message, 0.25 + 0.60 * fraction)
@@ -626,7 +626,7 @@ def edit_with_reference(
         return on_step_end
 
     def before_pass(index: int, label: str) -> None:
-        report("正在用 Reference 直接替换目标区域…", 0.27)
+        report("Generating the selected region with the reference...", 0.27)
 
     layers = run_layered_diffusion(
         pipe,
@@ -646,8 +646,8 @@ def edit_with_reference(
     if torch.cuda.is_available():
         torch.cuda.synchronize()
     diffusion_seconds = time.perf_counter() - diffusion_started
-    print(f"[FLUX] 扩散完成，耗时 {diffusion_seconds:.1f}s", flush=True)
-    report("正在恢复生成结果原始尺寸并直接合成…", 0.87)
+    print(f"[FLUX] Generation completed in {diffusion_seconds:.1f}s", flush=True)
+    report("Restoring original resolution and compositing...", 0.87)
     postprocess_started = time.perf_counter()
     raw_roi = rgb(raw_model).resize(source_roi.size, Image.Resampling.LANCZOS)
     corrected_roi, halo_info = harmonize_roi_boundary_colors(
@@ -725,46 +725,46 @@ def edit_with_reference(
     roi_scale_x = source_model.width / max(1, source_roi.width)
     roi_scale_y = source_model.height / max(1, source_roi.height)
     final_message = (
-        f"完成｜总耗时 {total_seconds:.1f}s｜输出 {final.width}x{final.height} "
-        f"({output_scale_x:.3f}x, {output_scale_y:.3f}x)｜峰值显存 {peak_reserved_gib:.2f} GiB"
+        f"Complete | Total time: {total_seconds:.1f}s | Output: {final.width}x{final.height} "
+        f"({output_scale_x:.3f}x, {output_scale_y:.3f}x) | Peak GPU memory: {peak_reserved_gib:.2f} GiB"
     )
     report(final_message, 1.0)
     print(
-        f"[统计] 目标输入={source_input_size[0]}x{source_input_size[1]}｜"
-        f"Reference={reference_input_size[0]}x{reference_input_size[1]}｜"
-        f"ROI原始={source_roi.width}x{source_roi.height}｜"
-        f"FLUX输入={source_model.width}x{source_model.height}｜"
-        f"最终输出={final.width}x{final.height}｜"
-        f"输出倍率={output_scale_x:.3f}x/{output_scale_y:.3f}x",
+        f"[Metrics] Target input={source_input_size[0]}x{source_input_size[1]} | "
+        f"Reference={reference_input_size[0]}x{reference_input_size[1]} | "
+        f"Original ROI={source_roi.width}x{source_roi.height} | "
+        f"FLUX input={source_model.width}x{source_model.height} | "
+        f"Final output={final.width}x{final.height} | "
+        f"Output scale={output_scale_x:.3f}x/{output_scale_y:.3f}x",
         flush=True,
     )
     print(
-        f"[统计] 预处理={preprocess_seconds:.2f}s｜模型准备={pipeline_prepare_seconds:.2f}s｜"
-        f"扩散={diffusion_seconds:.2f}s｜后处理={postprocess_seconds:.2f}s｜"
-        f"FLUX任务总耗时={total_seconds:.2f}s",
+        f"[Metrics] Preprocessing={preprocess_seconds:.2f}s | Model preparation={pipeline_prepare_seconds:.2f}s | "
+        f"Generation={diffusion_seconds:.2f}s | Postprocessing={postprocess_seconds:.2f}s | "
+        f"FLUX total time={total_seconds:.2f}s",
         flush=True,
     )
     print(
-        f"[统计] CUDA峰值 allocated={peak_allocated_gib:.2f} GiB｜"
+        f"[Metrics] Peak CUDA allocated={peak_allocated_gib:.2f} GiB | "
         f"reserved={peak_reserved_gib:.2f} GiB",
         flush=True,
     )
     if halo_info["applied"]:
         bias_text = "/".join(f"{value:+.1f}" for value in halo_info["bias"])
         print(
-            f"[Halo修复] strategy={halo_info['sample_strategy']}｜samples={halo_info['sample_pixels']}｜"
-            f"median_bias={bias_text}｜field_max={halo_info['field_abs_max']:.1f}｜"
-            f"边界误差 {halo_info['edge_error_before']:.2f} -> {halo_info['edge_error_after']:.2f}",
+            f"[Halo correction] strategy={halo_info['sample_strategy']} | samples={halo_info['sample_pixels']} | "
+            f"median_bias={bias_text} | field_max={halo_info['field_abs_max']:.1f} | "
+            f"Boundary error: {halo_info['edge_error_before']:.2f} -> {halo_info['edge_error_after']:.2f}",
             flush=True,
         )
     if despill_info["applied"]:
         print(
-            f"[绿色残边] pixels={despill_info['pixels']}｜"
+            f"[Green spill] pixels={despill_info['pixels']} | "
             f"mean_excess={despill_info['mean_excess']:.1f}",
             flush=True,
         )
     print(
-        f"[纹理融合] enabled={bool(texture_blend_enabled)}｜levels={int(texture_blend_levels)}",
+        f"[Texture blending] enabled={bool(texture_blend_enabled)} | levels={int(texture_blend_levels)}",
         flush=True,
     )
     return {
@@ -828,7 +828,7 @@ def edit_with_reference(
             "pipeline_prepare_seconds": pipeline_prepare_seconds,
             "diffusion_seconds": diffusion_seconds,
             "background_diffusion_seconds": 0.0,
-            "object_diffusion_seconds": layers["pass_seconds"].get("Reference 直接替换扩散", 0.0),
+            "object_diffusion_seconds": layers["pass_seconds"].get("Reference-guided diffusion", 0.0),
             "postprocess_seconds": postprocess_seconds,
             "flux_total_seconds": total_seconds,
             "peak_allocated_gib": peak_allocated_gib,
