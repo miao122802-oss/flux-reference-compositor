@@ -29,6 +29,7 @@ from image_processing import (
     draw_user_mask_bbox,
 )
 from mask_editor import EDITOR_CSS, EDITOR_HTML, MASK_EDITOR_JS
+from ui_language import configure_english_ui
 
 
 _JOB_EXECUTOR = ThreadPoolExecutor(max_workers=1, thread_name_prefix="flux2-klein")
@@ -1265,6 +1266,7 @@ def step_title(number: int, title: str, note: str) -> str:
 
 
 def build_demo():
+    configure_english_ui()
     with gr.Blocks(title="FLUX Reference Compositor", css=EDITOR_CSS) as demo:
         source_data = gr.Textbox(elem_id="green-source-data")
         mask_data = gr.Textbox(elem_id="green-mask-data")
